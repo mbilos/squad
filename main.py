@@ -1,0 +1,192 @@
+import os
+import argparse
+
+import tensorflow as tf
+import numpy as np
+
+import read
+import evaluate
+from qanet import QANet
+
+class Main:
+    def __init__(self):
+        self.config = self.get_args()
+
+        self.trainset, self.devset, self.embed, self.char2index, \
+            self.index2char, self.tag2index, self.index2tag, \
+            self.entity2index, self.index2entity = read.data(self.config.word_embed)
+
+        self.config.unique_chars = len(self.char2index)
+        self.config.embed_size = self.config.word_embed + self.config.char_embed
+
+        with tf.Graph().as_default() as g:
+            if self.config.name == 'qanet':
+                self.model = QANet(self.config)
+            else:
+                raise NotImplementedError('Invalid arhitecture name')
+
+            if self.config.mode == 'train':
+                self.train()
+            else:
+                self.test()
+
+    def train(self):
+        with tf.Session() as sess:
+            sess.run(tf.global_variables_initializer())
+            saver = tf.train.Saver(max_to_keep=20)
+
+            save_path = os.path.join('models', self.config.name)
+            if os.path.exists(save_path):
+                saver.restore(sess, tf.train.latest_checkpoint(save_path))
+
+            avgloss = 0
+            step = sess.run(self.model.global_step)
+
+            for i in range(step, self.config.iterations):
+                c, ch, q, qh, s, e = self.batch('train')
+                feed = { self.model.c_words: c, self.model.c_chars: ch, self.model.q_words: q,
+                    self.model.q_chars: qh, self.model.start: s, self.model.end: e }
+
+                _, loss = sess.run([self.model.optimize, self.model.loss], feed)
+                avgloss += loss
+
+                if i % self.config.print_every == 0:
+                    em, f1 = self.devtest(sess)
+
+                    print('Iteration:', i, '\tloss:', round(avgloss / self.config.print_every, 2), '\tdev EM:', em, 'f1:', f1)
+                    avgloss = 0
+
+                if i % self.config.save_every == 0:
+                    saver.save(sess, os.path.join('models', self.config.name, 'model'), global_step=i)
+
+    def test(self):
+        with tf.Session() as sess:
+            sess.run(tf.global_variables_initializer())
+            saver = tf.train.Saver()
+            saver.restore(sess, tf.train.latest_checkpoint(os.path.join('models', self.config.name)))
+
+            em, f1 = self.devtest(sess, 100)
+            print('Exact match:', em, '\tf1:', f1)
+
+            sess.run(self.model.assign_vars)
+            em, f1 = self.devtest(sess, 100)
+            print('Exact match:', em, '\tf1:', f1)
+
+    def devtest(self, sess, iterations=10):
+        em = f1 = 0
+        for j in range(iterations):
+            tokens, c, ch, q, qh, answers = self.batch('dev')
+            feed = { self.model.c_words: c, self.model.c_chars: ch, self.model.q_words: q, self.model.q_chars: qh }
+
+            start, end = sess.run([self.model.pred_start, self.model.pred_end], feed)
+            start, end = self.get_best_spans(start, end)
+
+            answer_cand = [' '.join(x[k:l]) for x,k,l in zip(tokens, start, end)]
+
+            e, f = evaluate._evaluate(answers, answer_cand)
+
+            em += e
+            f1 += f
+        return round(em / iterations, 2), round(f1 / iterations, 2)
+
+    def get_best_spans(self, start, end):
+        def get_best_span(first, second):
+            max_val = 0
+            best_word_span = (0, 1)
+            argmax_j1 = 0
+            for j in range(len(first)):
+                val1 = first[argmax_j1]
+                if val1 < first[j]:
+                    val1 = first[j]
+                    argmax_j1 = j
+
+                val2 = second[j]
+                if val1 * val2 > max_val and j != argmax_j1 and argmax_j1 - j < self.config.answer_len:
+                    best_word_span = (argmax_j1, j)
+                    max_val = val1 * val2
+            return best_word_span
+
+        starts = []
+        ends = []
+        for x, y in zip(start, end):
+            s, e = get_best_span(x, y)
+            starts.append(s)
+            ends.append(e)
+        return np.array(starts), np.array(ends)
+
+    def batch(self, mode='train'):
+        PAD = '='
+        UNK = '_'
+
+        data = self.trainset if mode == 'train' else self.devset
+
+        indexes = np.random.randint(len(data), size=self.config.batch)
+        batch = [data[i] for i in indexes]
+
+        def _embedding(w):
+            if w in self.embed:
+                return self.embed[w]
+            elif w.lower() in self.embed:
+                return self.embed[w.lower()]
+            else:
+                return np.random.uniform(-0.1, 0.1, (self.config.word_embed,))
+
+        def embed_and_chars(index, max_length):
+            text = [x[index][:max_length] + tuple(UNK) * (max_length - len(x[index])) for x in batch]
+            chars = [[[self.char2index.get(c, 0) for c in list(x[:self.config.max_char_len])] + [0] * (self.config.max_char_len - len(x)) for x in s] for s in text]
+            embed = [[_embedding(x) for x in s] for s in text]
+
+            return np.array(embed), np.array(chars)
+
+        contexts, context_ch = embed_and_chars(4, self.config.context_len)
+        questions, question_ch = embed_and_chars(7, self.config.question_len)
+
+        if mode == 'train':
+            starts = [min(x[-2], self.config.context_len - 1) for x in batch]
+            ends = [min(x[-1], self.config.context_len - 1) for x in batch]
+
+            return contexts, context_ch, questions, question_ch, np.array(starts), np.array(ends)
+        else:
+            tokens = [x[4] for x in batch]
+            answers = [x[3] for x in batch]
+            return tokens, contexts, context_ch, questions, question_ch, answers
+
+    def get_args(self):
+        parser = argparse.ArgumentParser(description='')
+        parser.add_argument('--name',           required=True,      type=str)
+        parser.add_argument('--mode',           default = 'train',  type=str)
+        parser.add_argument('--print_every',    default = 50,       type=int)
+        parser.add_argument('--batch',          default = 32,       type=int)
+        parser.add_argument('--save_every',     default = 1000,     type=int)
+        parser.add_argument('--iterations',     default = 30001,    type=int)
+        parser.add_argument('--context_len',    default = 400,      type=int)
+        parser.add_argument('--question_len',   default = 30,       type=int)
+        parser.add_argument('--answer_len',     default = 15,       type=int)
+        parser.add_argument('--word_embed',     default = 200,      type=int)
+        parser.add_argument('--char_embed',     default = 200,      type=int)
+        parser.add_argument('--max_char_len',   default = 16,       type=int)
+        parser.add_argument('--learning_rate',  default = 0.001,    type=float)
+        parser.add_argument('--filters',        default = 128,      type=int)
+        parser.add_argument('--dropout',        default = 0.1,      type=float)
+        parser.add_argument('--l2',             default = 3e-7,     type=float)
+        parser.add_argument('--grad_clip',      default = 5.0,      type=float)
+        parser.add_argument('--ema_decay',      default = 0.9999,   type=float)
+
+        # qanet specific
+        parser.add_argument('--encoder_num_blocks', default = 1, type=int)
+        parser.add_argument('--encoder_num_convs',  default = 4, type=int)
+        parser.add_argument('--encoder_kernel',     default = 7, type=int)
+        parser.add_argument('--model_num_blocks',   default = 7, type=int)
+        parser.add_argument('--model_num_convs',    default = 2, type=int)
+        parser.add_argument('--model_kernel',       default = 5, type=int)
+        parser.add_argument('--passes',             default = 3, type=int)
+        parser.add_argument('--num_heads',          default = 8, type=int)
+
+        args = parser.parse_args()
+        for a in vars(args):
+            print('{:<20}'.format(a), getattr(args, a))
+
+        return args
+
+if __name__ == "__main__":
+    Main()
