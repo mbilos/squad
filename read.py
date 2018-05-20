@@ -177,6 +177,8 @@ def read_data(word_embed_size):
         tag2index, index2tag, entity2index, index2entity
 
 def data(word_embed_size):
+    if not os.path.exists('models'):
+        os.makedirs('models')
     if not os.path.exists(os.path.join('data', 'train.pickle')) or not os.path.exists(os.path.join('data', 'dev.pickle')):
         print('Train or dev file doesn\'t exist. Creating now...')
         save_data()
