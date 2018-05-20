@@ -63,7 +63,7 @@ class QANet:
     def encoder(self, inputs, num_blocks, num_convolutions, kernel, mask=None, scope='encoder', reuse=None):
         def layer_dropout(prev, residual, dropout):
             pred = tf.random_uniform([], 0.0, 1.0) < dropout
-            return tf.cond(pred, lambda: residual, lambda: prev + residual)
+            return tf.cond(pred, lambda: prev, lambda: prev + residual)
 
         def residual_block(x, j):
             with tf.variable_scope('residual-block-%d' %j):
@@ -80,7 +80,7 @@ class QANet:
                 if (j + 1) % 2 == 0:
                     conv = tf.layers.dropout(conv, rate=self.config.dropout, training=self.config.training)
 
-                return x + conv
+                return conv
 
         with tf.variable_scope(scope, reuse=reuse):
             block = [inputs]
