@@ -61,6 +61,10 @@ class QANet:
         self.start_linear, self.end_linear, self.pred_start, self.pred_end = self.output()
 
     def encoder(self, inputs, num_blocks, num_convolutions, kernel, mask=None, scope='encoder', reuse=None):
+        def layer_dropout(prev, residual, dropout):
+            pred = tf.random_uniform([], 0.0, 1.0) < dropout
+            return tf.cond(pred, lambda: residual, lambda: prev + residual)
+
         def residual_block(x, j):
             with tf.variable_scope('residual-block-%d' %j):
                 ln = util.layer_norm(x, reuse=reuse)
@@ -72,6 +76,9 @@ class QANet:
                     dropout=self.config.dropout,
                     reuse=reuse,
                     training=self.config.training)
+
+                if (j + 1) % 2 == 0:
+                    conv = tf.layers.dropout(conv, rate=self.config.dropout, training=self.config.training)
 
                 return x + conv
 
@@ -85,7 +92,9 @@ class QANet:
 
                     conv = [pos]
                     for j in range(num_convolutions):
-                        conv.append(residual_block(conv[j], j))
+                        res = residual_block(conv[j], j)
+                        res = layer_dropout(conv[j], res, (j + 1) / num_convolutions * self.config.dropout)
+                        conv.append(res)
 
                     with tf.variable_scope('self-attention'):
                         ln = util.layer_norm(conv[-1], reuse=reuse)
@@ -106,7 +115,8 @@ class QANet:
                         ff = tf.layers.dense(ln, shape[-1], activation=tf.nn.relu, reuse=reuse)
                         ff = tf.layers.dropout(ff, rate=self.config.dropout, training=self.config.training)
 
-                    block.append(ff + self_attention)
+                    res = layer_dropout(self_attention, ff, (i + 1) / num_blocks * self.config.dropout)
+                    block.append(res)
 
             return block[-1]
 
@@ -210,10 +220,10 @@ class QANet:
             c = tf.nn.embedding_lookup(self.char_emb_matrix, self.c_chars)
             q = tf.nn.embedding_lookup(self.char_emb_matrix, self.q_chars)
 
-            c = tf.reduce_max(tf.layers.dropout(c, rate=self.config.dropout, training=self.config.training), axis = 2)
-            q = tf.reduce_max(tf.layers.dropout(q, rate=self.config.dropout, training=self.config.training), axis = 2)
+            c = tf.layers.conv2d(c, self.config.char_embed, kernel_size=[1, 5], activation=tf.nn.relu)
+            q = tf.layers.conv2d(q, self.config.char_embed, kernel_size=[1, 5], activation=tf.nn.relu, reuse=True)
 
-            c = tf.layers.conv1d(c, self.config.char_embed, kernel_size=5, activation=tf.nn.relu, padding='same')
-            q = tf.layers.conv1d(q, self.config.char_embed, kernel_size=5, activation=tf.nn.relu, padding='same', reuse=True)
+            c = tf.reduce_max(tf.layers.dropout(c, rate=self.config.dropout * 0.5, training=self.config.training), axis = 2)
+            q = tf.reduce_max(tf.layers.dropout(q, rate=self.config.dropout * 0.5, training=self.config.training), axis = 2)
 
             return c, q
