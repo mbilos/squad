@@ -162,7 +162,7 @@ class Main:
         parser.add_argument('--context_len',    default = 400,      type=int)
         parser.add_argument('--question_len',   default = 30,       type=int)
         parser.add_argument('--answer_len',     default = 15,       type=int)
-        parser.add_argument('--word_embed',     default = 200,      type=int)
+        parser.add_argument('--word_embed',     default = 300,      type=int)
         parser.add_argument('--char_embed',     default = 200,      type=int)
         parser.add_argument('--max_char_len',   default = 16,       type=int)
         parser.add_argument('--learning_rate',  default = 0.001,    type=float)
@@ -183,6 +183,8 @@ class Main:
         parser.add_argument('--num_heads',          default = 8, type=int)
 
         args = parser.parse_args()
+        args.training = args.mode == 'train'
+
         for a in vars(args):
             print('{:<20}'.format(a), getattr(args, a))
 
