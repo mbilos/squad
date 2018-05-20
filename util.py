@@ -2,6 +2,13 @@ import numpy as np
 import tensorflow as tf
 import math
 
+
+def get_shape(x):
+    static = x.get_shape().as_list()
+    shape = tf.shape(x)
+    return [static[i] or shape[i] for i in range(len(static))]
+
+
 def bidirectional_dynamic_rnn(inputs, sequence_length, hidden_size):
     outputs, state = tf.nn.bidirectional_dynamic_rnn(
         tf.contrib.rnn.GRUCell(hidden_size), # forward
@@ -45,9 +52,10 @@ def dense(inputs,
         return tf.nn.dropout(output, 1.0 - dropout)
 
 
-def multihead_attention(Q, K, V, heads=1, mask=None, dropout=0.0, scope='multihead-attention', reuse=None):
+def multihead_attention(Q, K, V, heads=1, mask=None, dropout=0.0, scope='multihead-attention', reuse=None, training=None):
     '''
     Applies multihead attention as described in https://arxiv.org/abs/1706.03762
+    And as implemented in https://github.com/tensorflow/tensor2tensor/blob/master/tensor2tensor/layers/common_attention.py
 
     Args:
         Q: query tensor (batch, len_q, dim_k)
@@ -62,28 +70,30 @@ def multihead_attention(Q, K, V, heads=1, mask=None, dropout=0.0, scope='multihe
         tensor with same shape as V
     '''
     with tf.variable_scope(scope, reuse=reuse):
-        k_shape = K.get_shape().as_list()
-        v_shape = V.get_shape().as_list()
+        k_shape = get_shape(K)
+        v_shape = get_shape(V)
 
         assert k_shape[-1] % heads == 0 and v_shape[-1] % heads == 0
         assert k_shape[1] == v_shape[1]
 
         def linear(inputs, shape, scope):
             with tf.variable_scope(scope, reuse=reuse):
-                inputs = dense(inputs, shape[-1], use_bias=False, dropout=dropout, reuse=reuse)
+                inputs = tf.layers.dense(inputs, shape[-1], use_bias=False, reuse=reuse)
+                inputs = tf.layers.dropout(inputs, rate=dropout, training=training)
                 inputs = tf.reshape(inputs, [-1] + shape[1:-1] + [heads, shape[-1] // heads])
                 return tf.transpose(inputs, [0, 2, 1, 3]) # [batch, heads, max_sentence_len, embedding / heads]
 
         Q, K, V = linear(Q, k_shape, 'query'), linear(K, k_shape, 'key'), linear(V, v_shape, 'value')
+        Q = Q * (k_shape[-1] // heads ** 0.5)
 
         # [batch, heads, max_sentence_len, embedding / heads]
-        alpha = tf.matmul(Q, K, transpose_b=True) / tf.sqrt(tf.cast(k_shape[-1], tf.float32))
+        alpha = tf.matmul(Q, K, transpose_b=True)
 
         if mask is not None:
+            # [batch, max_len] -> [batch, heads, max_len, max_len]
             mask = tf.tile(tf.reshape(mask, [-1, 1, 1, k_shape[1]]), [1, heads, k_shape[1], 1])
-            mask = tf.sign(tf.cast(mask, tf.int32))
-            paddings = tf.ones_like(alpha) * (-1e32) # big number that will become 0 when to the power of e
-            alpha = tf.where(tf.equal(mask, 0), paddings, alpha)
+            mask = tf.sign(tf.abs(tf.cast(mask, tf.float32)))
+            alpha *= mask
 
         alpha = tf.nn.softmax(alpha)
         attended = tf.matmul(alpha, V)
@@ -91,7 +101,8 @@ def multihead_attention(Q, K, V, heads=1, mask=None, dropout=0.0, scope='multihe
         # [batch, max_sentence_len, embedding]
         attended = tf.reshape(tf.transpose(attended, [0, 2, 1, 3]), [-1] + v_shape[1:])
 
-        attended = dense(attended, v_shape[-1], use_bias=False, dropout=dropout, reuse=reuse)
+        attended = tf.layers.dense(attended, v_shape[-1], use_bias=False, reuse=reuse)
+        attended = tf.layers.dropout(attended, rate=dropout, training=training)
 
         return attended
 
@@ -100,12 +111,12 @@ def gated_connection(prev, current, scope='gated-connection', reuse=None):
     with tf.variable_scope(scope, reuse=reuse):
         shape = current.get_shape().as_list()
 
-        keep = dense(current,
-                     shape[-1],
-                     activation=tf.sigmoid,
-                     w_init=tf.contrib.layers.xavier_initializer(),
-                     b_init=tf.constant_initializer(-2),
-                     reuse=reuse)
+        keep = tf.layers.dense(
+            current,
+            shape[-1],
+            activation=tf.sigmoid,
+            bias_initializer=tf.constant_initializer(-2),
+            reuse=reuse)
 
         return (1 - keep) * prev + keep * current
 
@@ -142,16 +153,16 @@ def depthwise_separable_convolution_old(inputs, filters, kernel_size, dropout=0.
         return tf.nn.dropout(conv, 1.0 - dropout)
 
 
-def depthwise_separable_conv(inputs, filters, kernel_size, activation=None, dropout=0.0, scope='conv', reuse=None):
+def depthwise_separable_conv(inputs, filters, kernel_size, activation=None, dropout=0.0, scope='conv', reuse=None, training=None):
     with tf.variable_scope(scope, reuse=reuse):
-        shape = inputs.get_shape().as_list()
+        shape = get_shape(inputs)
 
         with tf.variable_scope('depthwise', reuse=reuse):
             depthwise = tf.layers.conv1d(inputs, shape[-1], kernel_size, padding='same', reuse=reuse)
         with tf.variable_scope('pointwise', reuse=reuse):
             pointwise = tf.layers.conv1d(depthwise, filters, 1, activation=activation, padding='same', reuse=reuse)
 
-        return tf.nn.dropout(pointwise, 1.0 - dropout)
+        return tf.layers.dropout(pointwise, rate=dropout, training=training)
 
 
 def mask_logits(inputs, mask, mask_value=-1e30):

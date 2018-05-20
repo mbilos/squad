@@ -14,14 +14,18 @@ class QANet:
         self.training()
 
     def input(self):
-        self.c_words = tf.placeholder(tf.float32, [None, self.config.context_len, self.config.word_embed], 'context-words')
-        self.c_chars = tf.placeholder(tf.int32, [None, self.config.context_len, self.config.max_char_len], 'context-chars')
+        with tf.variable_scope('input') as scope:
+            self.c_words = tf.placeholder(tf.float32, [None, self.config.context_len, self.config.word_embed], 'context-words')
+            self.c_chars = tf.placeholder(tf.int32, [None, self.config.context_len, self.config.max_char_len], 'context-chars')
 
-        self.q_words = tf.placeholder(tf.float32, [None, self.config.question_len, self.config.word_embed], 'query-words')
-        self.q_chars = tf.placeholder(tf.int32, [None, self.config.question_len, self.config.max_char_len], 'query-chars')
+            self.q_words = tf.placeholder(tf.float32, [None, self.config.question_len, self.config.word_embed], 'query-words')
+            self.q_chars = tf.placeholder(tf.int32, [None, self.config.question_len, self.config.max_char_len], 'query-chars')
 
-        self.start = tf.placeholder(tf.int32, [None], 'start-index')
-        self.end = tf.placeholder(tf.int32, [None], 'end-index')
+            self.c_mask = tf.reduce_sum(self.c_words, -1)
+            self.q_mask = tf.reduce_sum(self.q_words, -1)
+
+            self.start = tf.placeholder(tf.int32, [None], 'start-index')
+            self.end = tf.placeholder(tf.int32, [None], 'end-index')
 
     def training(self):
         with tf.variable_scope('loss') as scope:
@@ -42,7 +46,7 @@ class QANet:
             ema = tf.train.ExponentialMovingAverage(decay=self.config.ema_decay)
             ema_op = ema.apply(tf.trainable_variables())
             with tf.control_dependencies([ema_op]):
-                loss = tf.identity(self.loss)
+                self.loss = tf.identity(self.loss)
                 assign_vars = []
                 for var in tf.global_variables():
                     v = ema.average(var)
@@ -56,47 +60,65 @@ class QANet:
         self.modeling = self.model_encoder()
         self.start_linear, self.end_linear, self.pred_start, self.pred_end = self.output()
 
-    def encoder(self, inputs, num_blocks, num_convolutions, kernel, scope='encoder', reuse=None):
+    def encoder(self, inputs, num_blocks, num_convolutions, kernel, mask=None, scope='encoder', reuse=None):
+        def residual_block(x, j):
+            with tf.variable_scope('residual-block-%d' %j):
+                ln = util.layer_norm(x, reuse=reuse)
+                conv = util.depthwise_separable_conv(
+                    ln,
+                    filters=self.config.filters,
+                    activation=tf.nn.relu,
+                    kernel_size=kernel,
+                    dropout=self.config.dropout,
+                    reuse=reuse,
+                    training=self.config.training)
+
+                return x + conv
+
         with tf.variable_scope(scope, reuse=reuse):
-            output = inputs
+            block = [inputs]
 
             for i in range(num_blocks):
-                with tf.variable_scope('encoder-block-' + str(i), reuse=reuse):
-                    shape = output.get_shape().as_list()
-                    conv_input = util.positional_encoding(output, dropout=self.config.dropout)
+                with tf.variable_scope('encoder-block-%d' % i, reuse=reuse):
+                    shape = util.get_shape(block[i])
+                    pos = util.positional_encoding(block[i])
 
-                    def residual_block(x, j):
-                        with tf.variable_scope('residual-block-%d' %j):
-                            ln = util.layer_norm(x, scope='layer-norm-%d' %j, reuse=reuse)
-                            conv = util.depthwise_separable_conv(ln, self.config.filters, kernel, reuse=reuse)
-                            return x + conv
-
+                    conv = [pos]
                     for j in range(num_convolutions):
-                        conv_input = residual_block(conv_input, j)
+                        conv.append(residual_block(conv[j], j))
 
                     with tf.variable_scope('self-attention'):
-                        conv_ln = tf.nn.dropout(util.layer_norm(conv_input, scope='layer-norm-%d-1' %j, reuse=reuse), 1 - self.config.dropout)
-                        self_attention = util.multihead_attention(conv_ln, conv_ln, conv_ln, heads=self.config.num_heads, scope='self-attention-%d-1' %j, reuse=reuse)
-                        self_attention = tf.nn.dropout(self_attention, 1 - self.config.dropout) + conv_input
+                        ln = util.layer_norm(conv[-1], reuse=reuse)
+                        self_attention = util.multihead_attention(
+                            Q=ln,
+                            K=ln,
+                            V=ln,
+                            mask=mask,
+                            heads=self.config.num_heads,
+                            dropout=self.config.dropout,
+                            reuse=reuse,
+                            training=self.config.training)
+
+                        self_attention = self_attention + conv[-1]
 
                     with tf.variable_scope('feedforward'):
-                        att_ln = util.layer_norm(self_attention, scope='layer-norm-%d-2' %j, reuse=reuse)
-                        feedforward = util.dense(att_ln, shape[-1], activation=tf.nn.relu, scope='ff_1', reuse=reuse)
-                        feedforward = util.dense(feedforward, shape[-1], activation=None, scope='ff_2', reuse=reuse, dropout=self.config.dropout)
+                        ln = util.layer_norm(self_attention, reuse=reuse)
+                        ff = tf.layers.dense(ln, shape[-1], activation=tf.nn.relu, reuse=reuse)
+                        ff = tf.layers.dropout(ff, rate=self.config.dropout, training=self.config.training)
 
-                    output = feedforward + self_attention
+                    block.append(ff + self_attention)
 
-        return output
+            return block[-1]
 
     def output(self):
         with tf.variable_scope('start-index') as scope:
             start = tf.concat([self.modeling[-3], self.modeling[-2]], -1)
-            start = tf.squeeze(util.dense(start, 1), -1)
+            start = tf.squeeze(tf.layers.dense(start, 1, use_bias=False), -1)
             p_start = tf.nn.softmax(start, name='pred-start')
 
         with tf.variable_scope('end-index') as scope:
             end = tf.concat([self.modeling[-3], self.modeling[-1]], -1)
-            end = tf.squeeze(util.dense(end, 1), -1)
+            end = tf.squeeze(tf.layers.dense(end, 1, use_bias=False), -1)
             p_end = tf.nn.softmax(end, name='pred-end')
 
         return start, end, p_start, p_end
@@ -108,10 +130,16 @@ class QANet:
 
             for i in range(3):
                 if i % 2 == 0:
-                    modeling[i] = tf.nn.dropout(modeling[i], 1.0 - self.config.dropout)
+                    modeling[i] = tf.layers.dropout(modeling[i], rate=self.config.dropout, training=self.config.training)
                 reuse = True if i > 0 else None
-                modeling.append(self.encoder(modeling[i], self.config.model_num_blocks,
-                    self.config.model_num_convs, self.config.model_kernel, reuse=reuse))
+                m = self.encoder(
+                    modeling[i],
+                    num_blocks=self.config.model_num_blocks,
+                    num_convolutions=self.config.model_num_convs,
+                    kernel=self.config.model_kernel,
+                    mask=self.c_mask,
+                    reuse=reuse)
+                modeling.append(m)
 
             return modeling
 
@@ -123,7 +151,7 @@ class QANet:
             q_tile = tf.tile(tf.expand_dims(q, 1), [1, self.config.context_len, 1, 1])
 
             similarity = tf.concat([c_tile, q_tile, c_tile * q_tile], -1)
-            similarity = tf.squeeze(util.dense(similarity, 1), -1)
+            similarity = tf.squeeze(tf.layers.dense(similarity, 1, use_bias=False), -1)
 
             row_norm = tf.nn.softmax(similarity)
             A = tf.matmul(row_norm, q) # context to query
@@ -139,8 +167,8 @@ class QANet:
         with tf.variable_scope('input-encoder'):
             c, q = self.input_embedding()
 
-            c = self.encoder(c, self.config.encoder_num_blocks, self.config.encoder_num_convs, self.config.encoder_kernel)
-            q = self.encoder(q, self.config.encoder_num_blocks, self.config.encoder_num_convs, self.config.encoder_kernel, reuse=True)
+            c = self.encoder(c, self.config.encoder_num_blocks, self.config.encoder_num_convs, self.config.encoder_kernel, mask=self.c_mask)
+            q = self.encoder(q, self.config.encoder_num_blocks, self.config.encoder_num_convs, self.config.encoder_kernel, mask=self.q_mask, reuse=True)
 
             return c, q
 
@@ -153,17 +181,21 @@ class QANet:
 
             with tf.variable_scope('highway'):
                 with tf.variable_scope('highway-1'):
-                    c_h1 = util.dense(c, self.config.embed_size, activation=tf.nn.relu, dropout=self.config.dropout)
+                    c_h1 = tf.layers.dense(c, self.config.embed_size, activation=tf.nn.relu)
+                    c_h1 = tf.layers.dropout(c_h1, rate=self.config.dropout, training=self.config.training)
                     c_h1 = util.gated_connection(c, c_h1)
 
-                    q_h1 = util.dense(q, self.config.embed_size, activation=tf.nn.relu, dropout=self.config.dropout, reuse=True)
+                    q_h1 = tf.layers.dense(q, self.config.embed_size, activation=tf.nn.relu, reuse=True)
+                    q_h1 = tf.layers.dropout(q_h1, rate=self.config.dropout, training=self.config.training)
                     q_h1 = util.gated_connection(q, q_h1, reuse=True)
 
                 with tf.variable_scope('highway-2'):
-                    c_h2 = util.dense(c_h1, self.config.embed_size, activation=tf.nn.relu, dropout=self.config.dropout)
+                    c_h2 = tf.layers.dense(c_h1, self.config.embed_size, activation=tf.nn.relu)
+                    c_h2 = tf.layers.dropout(c_h2, rate=self.config.dropout, training=self.config.training)
                     c_h2 = util.gated_connection(c_h1, c_h2)
 
-                    q_h2 = util.dense(q_h1, self.config.embed_size, activation=tf.nn.relu, dropout=self.config.dropout, reuse=True)
+                    q_h2 = tf.layers.dense(q_h1, self.config.embed_size, activation=tf.nn.relu, reuse=True)
+                    q_h2 = tf.layers.dropout(q_h2, rate=self.config.dropout, training=self.config.training)
                     q_h2 = util.gated_connection(q_h1, q_h2, reuse=True)
 
                 c_conv = tf.layers.conv1d(c_h2, self.config.filters, 1, padding='same')
@@ -174,13 +206,12 @@ class QANet:
     def char_embedding(self):
          with tf.variable_scope('char-embedding'):
             self.char_emb_matrix = tf.get_variable('char_emb', [self.config.unique_chars, self.config.char_embed])
-            char_keep = 1.0 - 0.5 * self.config.dropout
 
             c = tf.nn.embedding_lookup(self.char_emb_matrix, self.c_chars)
             q = tf.nn.embedding_lookup(self.char_emb_matrix, self.q_chars)
 
-            c = tf.reduce_max(tf.nn.dropout(c, char_keep), axis = 2)
-            q = tf.reduce_max(tf.nn.dropout(q, char_keep), axis = 2)
+            c = tf.reduce_max(tf.layers.dropout(c, rate=self.config.dropout, training=self.config.training), axis = 2)
+            q = tf.reduce_max(tf.layers.dropout(q, rate=self.config.dropout, training=self.config.training), axis = 2)
 
             c = tf.layers.conv1d(c, self.config.char_embed, kernel_size=5, activation=tf.nn.relu, padding='same')
             q = tf.layers.conv1d(q, self.config.char_embed, kernel_size=5, activation=tf.nn.relu, padding='same', reuse=True)
