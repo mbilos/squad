@@ -9,48 +9,16 @@ def get_shape(x):
     return [static[i] or shape[i] for i in range(len(static))]
 
 
-def bidirectional_dynamic_rnn(inputs, sequence_length, hidden_size):
-    outputs, state = tf.nn.bidirectional_dynamic_rnn(
-        tf.contrib.rnn.GRUCell(hidden_size), # forward
-        tf.contrib.rnn.GRUCell(hidden_size), # backward
-        inputs,
-        dtype=tf.float32,
-        sequence_length=sequence_length)
-
-    return outputs, state
-
-
-def dense(inputs,
-          units,
-          activation=None,
-          w_init=tf.contrib.layers.xavier_initializer(),
-          b_init=tf.zeros_initializer(),
-          use_bias=True,
-          dropout=0.0,
-          scope='dense',
-          reuse=None):
-
+def bidirectional_dynamic_rnn(inputs, sequence_length, hidden_size, scope='bi-rnn', reuse=None):
     with tf.variable_scope(scope, reuse=reuse):
-        shape = [inputs.get_shape().as_list()[i] or tf.shape(inputs)[i] for i in range(len(inputs.get_shape()))]
+        outputs, state = tf.nn.bidirectional_dynamic_rnn(
+            tf.contrib.rnn.GRUCell(hidden_size), # forward
+            tf.contrib.rnn.GRUCell(hidden_size), # backward
+            inputs,
+            dtype=tf.float32,
+            sequence_length=sequence_length)
 
-        w_shape = [1] * (len(shape) - 2) + [shape[-1], units]
-        w_tile = shape[:-2] + [1] * (len(shape[-2:]))
-        w = tf.tile(tf.get_variable('weight', w_shape, initializer=w_init), w_tile)
-
-        output = tf.matmul(inputs, w)
-
-        if use_bias:
-            b_shape = [1] * (len(shape) - 1) + [units]
-            b_tile = shape[:-1] + [1]
-            b = tf.tile(tf.get_variable('bias', b_shape, initializer=b_init), b_tile)
-
-            output += b
-
-        if activation is not None:
-            output = activation(output)
-
-        return tf.nn.dropout(output, 1.0 - dropout)
-
+        return outputs, state
 
 def multihead_attention(Q, K, V, heads=1, mask=None, dropout=0.0, scope='multihead-attention', reuse=None, training=None):
     '''
@@ -84,7 +52,7 @@ def multihead_attention(Q, K, V, heads=1, mask=None, dropout=0.0, scope='multihe
                 return tf.transpose(inputs, [0, 2, 1, 3]) # [batch, heads, max_sentence_len, embedding / heads]
 
         Q, K, V = linear(Q, k_shape, 'query'), linear(K, k_shape, 'key'), linear(V, v_shape, 'value')
-        Q = Q * (k_shape[-1] // heads ** 0.5)
+        Q = Q * ((k_shape[-1] // heads) ** -0.5)
 
         # [batch, heads, max_sentence_len, embedding / heads]
         alpha = tf.matmul(Q, K, transpose_b=True)
