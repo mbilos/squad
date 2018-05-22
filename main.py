@@ -17,7 +17,10 @@ class Main:
             self.entity2index, self.index2entity = read.data(self.config.word_embed)
 
         self.config.unique_chars = len(self.char2index)
-        self.config.embed_size = self.config.word_embed + self.config.char_embed
+        self.config.unique_pos = len(self.tag2index)
+        self.config.unique_ner = len(self.entity2index)
+        self.config.embed_size = self.config.word_embed + self.config.char_embed + \
+            self.config.pos_embed + self.config.ner_embed
 
         with tf.Graph().as_default() as g:
             if self.config.name == 'qanet':
@@ -43,9 +46,10 @@ class Main:
             step = sess.run(self.model.global_step)
 
             for i in range(step, self.config.iterations):
-                c, ch, q, qh, s, e = self.batch('train')
-                feed = { self.model.c_words: c, self.model.c_chars: ch, self.model.q_words: q,
-                    self.model.q_chars: qh, self.model.start: s, self.model.end: e }
+                c, ch, q, qh, ct, ce, qt, qe, s, e = self.batch('train')
+                feed = { self.model.c_words: c, self.model.c_chars: ch, self.model.c_pos: ct, self.model.c_ner: ce,
+                         self.model.q_words: q, self.model.q_chars: qh, self.model.q_pos: qt, self.model.q_ner: qe,
+                         self.model.start: s, self.model.end: e }
 
                 _, loss = sess.run([self.model.optimize, self.model.loss], feed)
                 avgloss += loss
@@ -75,8 +79,9 @@ class Main:
     def devtest(self, sess, iterations=10):
         em = f1 = 0
         for j in range(iterations):
-            tokens, c, ch, q, qh, answers = self.batch('dev')
-            feed = { self.model.c_words: c, self.model.c_chars: ch, self.model.q_words: q, self.model.q_chars: qh }
+            tokens, c, ch, q, qh, ct, ce, qt, qe, answers = self.batch('dev')
+            feed = { self.model.c_words: c, self.model.c_chars: ch, self.model.c_pos: ct, self.model.c_ner: ce,
+                     self.model.q_words: q, self.model.q_chars: qh, self.model.q_pos: qt, self.model.q_ner: qe }
 
             start, end = sess.run([self.model.pred_start, self.model.pred_end], feed)
             start, end = self.get_best_spans(start, end)
@@ -129,27 +134,40 @@ class Main:
             elif w.lower() in self.embed:
                 return self.embed[w.lower()]
             else:
-                return np.random.uniform(-0.1, 0.1, (self.config.word_embed,))
+                return self.embed[UNK]
 
-        def embed_and_chars(index, max_length):
-            text = [x[index][:max_length] + tuple(UNK) * (max_length - len(x[index])) for x in batch]
-            chars = [[[self.char2index.get(c, 0) for c in list(x[:self.config.max_char_len])] + [0] * (self.config.max_char_len - len(x)) for x in s] for s in text]
-            embed = [[_embedding(x) for x in s] for s in text]
+        def add_padding(data, dictionary, length, max_length):
+            return [dictionary[x] for x in data][:max_length] + [dictionary[UNK]] * (max_length - length)
 
-            return np.array(embed), np.array(chars)
-
-        contexts, context_ch = embed_and_chars(4, self.config.context_len)
-        questions, question_ch = embed_and_chars(7, self.config.question_len)
+        max_ch = self.config.max_char_len
+        unk_ch_ind = self.char2index[UNK]
+        contexts, context_ch, questions, question_ch = [], [], [], []
+        context_tags, context_entities, question_tags, question_entities = [], [], [], []
+        for b in batch:
+            c_length = len(b[4])
+            q_length = len(b[7])
+            context = b[4][:self.config.context_len] + tuple(PAD) * (self.config.context_len - c_length)
+            question = b[7][:self.config.question_len] + tuple(PAD) * (self.config.question_len - q_length)
+            contexts.append([_embedding(x) for x in context])
+            questions.append([_embedding(x) for x in question])
+            context_ch.append([[self.char2index.get(c, unk_ch_ind) for c in list(x[:max_ch] + PAD * (max_ch - len(x)))] for x in context])
+            question_ch.append([[self.char2index.get(c, unk_ch_ind) for c in list(x[:max_ch] + PAD * (max_ch - len(x)))] for x in question])
+            context_tags.append(add_padding(b[5], self.tag2index, c_length, self.config.context_len))
+            context_entities.append(add_padding(b[6], self.entity2index, c_length, self.config.context_len))
+            question_tags.append(add_padding(b[8], self.tag2index, q_length, self.config.question_len))
+            question_entities.append(add_padding(b[9], self.entity2index, q_length, self.config.question_len))
 
         if mode == 'train':
             starts = [min(x[-2], self.config.context_len - 1) for x in batch]
             ends = [min(x[-1], self.config.context_len - 1) for x in batch]
 
-            return contexts, context_ch, questions, question_ch, np.array(starts), np.array(ends)
+            return contexts, context_ch, questions, question_ch, context_tags, \
+                context_entities, question_tags, question_entities, np.array(starts), np.array(ends)
         else:
             tokens = [x[4] for x in batch]
             answers = [x[3] for x in batch]
-            return tokens, contexts, context_ch, questions, question_ch, answers
+            return tokens, contexts, context_ch, questions, question_ch, context_tags, \
+                context_entities, question_tags, question_entities, answers
 
     def get_args(self):
         parser = argparse.ArgumentParser(description='')
@@ -164,6 +182,8 @@ class Main:
         parser.add_argument('--answer_len',     default = 15,       type=int)
         parser.add_argument('--word_embed',     default = 300,      type=int)
         parser.add_argument('--char_embed',     default = 200,      type=int)
+        parser.add_argument('--pos_embed',      default = 20,       type=int)
+        parser.add_argument('--ner_embed',      default = 20,       type=int)
         parser.add_argument('--max_char_len',   default = 16,       type=int)
         parser.add_argument('--learning_rate',  default = 0.001,    type=float)
         parser.add_argument('--filters',        default = 128,      type=int)

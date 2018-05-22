@@ -163,14 +163,20 @@ def read_data(word_embed_size):
 
     with open('data/character_to_index.json', 'r') as f:
         character2index = json.load(f)
+        character2index[UNK] = len(character2index)
+        character2index[PAD] = len(character2index) # not same as prev line because adding UNK added 1 to len
         index2character = { i: x for x,i in character2index.items() }
 
     with open('data/tag_to_index.json', 'r') as f:
         tag2index = json.load(f)
+        tag2index[UNK] = len(tag2index)
+        tag2index[PAD] = len(tag2index)
         index2tag = { i: x for x,i in tag2index.items() }
 
     with open('data/entity_to_index.json', 'r') as f:
         entity2index = json.load(f)
+        entity2index[UNK] = len(entity2index)
+        entity2index[PAD] = len(entity2index)
         index2entity = { i: x for x,i in entity2index.items() }
 
     return train, dev, embed, character2index, index2character, \

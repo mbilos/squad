@@ -17,9 +17,13 @@ class QANet:
         with tf.variable_scope('input') as scope:
             self.c_words = tf.placeholder(tf.float32, [None, self.config.context_len, self.config.word_embed], 'context-words')
             self.c_chars = tf.placeholder(tf.int32, [None, self.config.context_len, self.config.max_char_len], 'context-chars')
+            self.c_pos = tf.placeholder(tf.int32, [None, self.config.context_len], 'context-part-of-speech')
+            self.c_ner = tf.placeholder(tf.int32, [None, self.config.context_len], 'context-named-entity')
 
             self.q_words = tf.placeholder(tf.float32, [None, self.config.question_len, self.config.word_embed], 'query-words')
             self.q_chars = tf.placeholder(tf.int32, [None, self.config.question_len, self.config.max_char_len], 'query-chars')
+            self.q_pos = tf.placeholder(tf.int32, [None, self.config.question_len], 'query-part-of-speech')
+            self.q_ner = tf.placeholder(tf.int32, [None, self.config.question_len], 'query-named-entity')
 
             self.c_mask = tf.reduce_sum(self.c_words, -1)
             self.q_mask = tf.reduce_sum(self.q_words, -1)
@@ -188,6 +192,20 @@ class QANet:
 
             c = tf.concat([self.c_words, c_char_embed], -1)
             q = tf.concat([self.q_words, q_char_embed], -1)
+
+            if self.config.pos_embed > 0:
+                self.pos_emb_matrix = tf.get_variable('pos_emb', [self.config.unique_pos, self.config.pos_embed])
+                c_pos_embed = tf.nn.embedding_lookup(self.pos_emb_matrix, self.c_pos)
+                q_pos_embed = tf.nn.embedding_lookup(self.pos_emb_matrix, self.q_pos)
+                c = tf.concat([c, tf.layers.dropout(c_pos_embed, rate=self.config.dropout*0.5, training=self.config.training)], -1)
+                q = tf.concat([q, tf.layers.dropout(q_pos_embed, rate=self.config.dropout*0.5, training=self.config.training)], -1)
+
+            if self.config.ner_embed > 0:
+                self.ner_emb_matrix = tf.get_variable('ner_emb', [self.config.unique_ner, self.config.ner_embed])
+                c_ner_embed = tf.nn.embedding_lookup(self.ner_emb_matrix, self.c_ner)
+                q_ner_embed = tf.nn.embedding_lookup(self.ner_emb_matrix, self.q_ner)
+                c = tf.concat([c, tf.layers.dropout(c_ner_embed, rate=self.config.dropout*0.5, training=self.config.training)], -1)
+                q = tf.concat([q, tf.layers.dropout(q_ner_embed, rate=self.config.dropout*0.5, training=self.config.training)], -1)
 
             with tf.variable_scope('highway'):
                 with tf.variable_scope('highway-1'):
