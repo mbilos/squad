@@ -7,6 +7,7 @@ import numpy as np
 import read
 import evaluate
 from qanet import QANet
+from bidaf import BiDAF
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
@@ -27,6 +28,8 @@ class Main:
         with tf.Graph().as_default() as g:
             if self.config.name == 'qanet':
                 self.model = QANet(self.config)
+            elif self.config.name == 'bidaf':
+                self.model = BiDAF(self.config)
             else:
                 raise NotImplementedError('Invalid arhitecture name')
 
@@ -203,6 +206,9 @@ class Main:
         parser.add_argument('--model_kernel',       default = 5, type=int)
         parser.add_argument('--passes',             default = 3, type=int)
         parser.add_argument('--num_heads',          default = 8, type=int)
+
+        # bidaf specific
+        parser.add_argument('--cell_size', default = 128, type=int)
 
         args = parser.parse_args()
         args.training = args.mode == 'train'
