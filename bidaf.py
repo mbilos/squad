@@ -115,10 +115,25 @@ class BiDAF:
             return attention
 
     def input_encoder(self):
-        with tf.variable_scope('highway'):
+        with tf.variable_scope('input-embedding'):
             c = tf.concat([self.c_words, self.c_char_embed], -1)
             q = tf.concat([self.q_words, self.q_char_embed], -1)
 
+            if self.config.pos_embed > 0:
+                self.pos_emb_matrix = tf.get_variable('pos_emb', [self.config.unique_pos, self.config.pos_embed])
+                c_pos_embed = tf.nn.embedding_lookup(self.pos_emb_matrix, self.c_pos)
+                q_pos_embed = tf.nn.embedding_lookup(self.pos_emb_matrix, self.q_pos)
+                c = tf.concat([c, tf.layers.dropout(c_pos_embed, rate=self.config.dropout*0.5, training=self.config.training)], -1)
+                q = tf.concat([q, tf.layers.dropout(q_pos_embed, rate=self.config.dropout*0.5, training=self.config.training)], -1)
+
+            if self.config.ner_embed > 0:
+                self.ner_emb_matrix = tf.get_variable('ner_emb', [self.config.unique_ner, self.config.ner_embed])
+                c_ner_embed = tf.nn.embedding_lookup(self.ner_emb_matrix, self.c_ner)
+                q_ner_embed = tf.nn.embedding_lookup(self.ner_emb_matrix, self.q_ner)
+                c = tf.concat([c, tf.layers.dropout(c_ner_embed, rate=self.config.dropout*0.5, training=self.config.training)], -1)
+                q = tf.concat([q, tf.layers.dropout(q_ner_embed, rate=self.config.dropout*0.5, training=self.config.training)], -1)
+
+        with tf.variable_scope('highway'):
             with tf.variable_scope('highway-1'):
                 c_h1 = tf.layers.dense(c, self.config.embed_size, activation=tf.nn.relu)
                 c_h1 = tf.layers.dropout(c_h1, rate=self.config.dropout, training=self.config.training)
