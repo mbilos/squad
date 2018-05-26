@@ -116,8 +116,14 @@ class BiDAF:
 
     def input_encoder(self):
         with tf.variable_scope('input-embedding'):
-            c = tf.concat([self.c_words, self.c_char_embed], -1)
-            q = tf.concat([self.q_words, self.q_char_embed], -1)
+            similarity = tf.matmul(tf.nn.l2_normalize(self.c_words, -1), tf.nn.l2_normalize(self.q_words, -1), transpose_b=True)
+            c_similarity = tf.reduce_max(similarity, -1, keep_dims=True)
+            q_similarity = tf.transpose(tf.reduce_max(similarity, 1, keep_dims=True), [0,2,1])
+
+            c = tf.concat([self.c_words, self.c_char_embed, c_similarity], -1)
+            q = tf.concat([self.q_words, self.q_char_embed, q_similarity], -1)
+
+            self.config.embed_size += 1
 
             if self.config.pos_embed > 0:
                 self.pos_emb_matrix = tf.get_variable('pos_emb', [self.config.unique_pos, self.config.pos_embed])
