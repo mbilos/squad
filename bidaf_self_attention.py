@@ -86,19 +86,26 @@ class BiDAF_SelfAttention:
             attention = tf.layers.dense(self.attention, self.config.cell_size * 2, activation=tf.nn.relu)
             attention = tf.layers.dropout(attention, rate=self.config.dropout, training=self.config.training)
 
-            bigru, _ = util.bidirectional_dynamic_rnn(attention, self.c_len, self.config.cell_size)
+            bigru, _ = util.bidirectional_dynamic_rnn(self.attention, self.c_len, self.config.cell_size)
             bigru = tf.concat(bigru, axis=2)
 
-            self_attention = util.multihead_attention(
+            self_attention_1 = util.multihead_attention(
                 Q=bigru, K=bigru, V=bigru,
                 mask=self.c_mask,
                 heads=self.config.num_heads,
                 dropout=self.config.dropout,
                 training=self.config.training)
 
-            residual = tf.layers.dense(self_attention, self.config.cell_size * 2, activation=tf.nn.relu)
+            self_attention_2 = util.multihead_attention(
+                Q=self_attention_1, K=self_attention_1, V=self_attention_1,
+                mask=self.c_mask,
+                heads=self.config.num_heads,
+                dropout=self.config.dropout,
+                training=self.config.training)
 
-            attention = attention + residual
+            self_attention = util.gated_connection(self_attention_1, self_attention_2)
+
+            attention = attention + self_attention
 
         with tf.variable_scope('first-memory') as scope:
             memory1, _ = util.bidirectional_dynamic_rnn(attention, self.c_len, self.config.cell_size)
@@ -154,28 +161,9 @@ class BiDAF_SelfAttention:
                 c = tf.concat([c, tf.layers.dropout(c_ner_embed, rate=self.config.dropout*0.5, training=self.config.training)], -1)
                 q = tf.concat([q, tf.layers.dropout(q_ner_embed, rate=self.config.dropout*0.5, training=self.config.training)], -1)
 
-        with tf.variable_scope('highway'):
-            with tf.variable_scope('highway-1'):
-                c_h1 = tf.layers.dense(c, self.config.embed_size, activation=tf.nn.relu)
-                c_h1 = tf.layers.dropout(c_h1, rate=self.config.dropout, training=self.config.training)
-                c_h1 = util.gated_connection(c, c_h1)
-
-                q_h1 = tf.layers.dense(q, self.config.embed_size, activation=tf.nn.relu, reuse=True)
-                q_h1 = tf.layers.dropout(q_h1, rate=self.config.dropout, training=self.config.training)
-                q_h1 = util.gated_connection(q, q_h1, reuse=True)
-
-            with tf.variable_scope('highway-2'):
-                c_h2 = tf.layers.dense(c_h1, self.config.embed_size, activation=tf.nn.relu)
-                c_h2 = tf.layers.dropout(c_h2, rate=self.config.dropout, training=self.config.training)
-                c_h2 = util.gated_connection(c_h1, c_h2)
-
-                q_h2 = tf.layers.dense(q_h1, self.config.embed_size, activation=tf.nn.relu, reuse=True)
-                q_h2 = tf.layers.dropout(q_h2, rate=self.config.dropout, training=self.config.training)
-                q_h2 = util.gated_connection(q_h1, q_h2, reuse=True)
-
         with tf.variable_scope('contextual-embedding') as scope:
-            c_output, _ = util.bidirectional_dynamic_rnn(c_h2, self.c_len, self.config.cell_size)
-            q_output, _ = util.bidirectional_dynamic_rnn(q_h2, self.q_len, self.config.cell_size, reuse=True)
+            c_output, _ = util.bidirectional_dynamic_rnn(c, self.c_len, self.config.cell_size)
+            q_output, _ = util.bidirectional_dynamic_rnn(q, self.q_len, self.config.cell_size, reuse=True)
 
             c_state = tf.concat(c_output, axis=2)
             q_state = tf.concat(q_output, axis=2)
