@@ -94,6 +94,7 @@ class BiDAF_SelfAttention:
                 mask=self.c_mask,
                 heads=self.config.num_heads,
                 dropout=self.config.dropout,
+                scope='self-attention-1',
                 training=self.config.training)
 
             self_attention_2 = util.multihead_attention(
@@ -101,6 +102,7 @@ class BiDAF_SelfAttention:
                 mask=self.c_mask,
                 heads=self.config.num_heads,
                 dropout=self.config.dropout,
+                scope='self-attention-2',
                 training=self.config.training)
 
             self_attention = util.gated_connection(self_attention_1, self_attention_2)
