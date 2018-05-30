@@ -84,7 +84,7 @@ class BiDAF_SelfAttention:
 
         def self_attention(inputs):
             attention = tf.matmul(inputs, inputs, transpose_b=True)
-            attention = tf.nn.softmax(attention, 0)
+            attention = tf.nn.softmax(attention, 1)
             return tf.matmul(attention, inputs)
 
         with tf.variable_scope('self-attention') as scope:
