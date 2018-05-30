@@ -82,6 +82,11 @@ class BiDAF_SelfAttention:
 
     def model_encoder(self):
 
+        def self_attention(inputs):
+            attention = tf.matmul(inputs, inputs, transpose_b=True)
+            attention = tf.nn.softmax(attention, 0)
+            return tf.matmul(attention, inputs)
+
         with tf.variable_scope('self-attention') as scope:
             attention = tf.layers.dense(self.attention, self.config.cell_size * 2, activation=tf.nn.relu)
             attention = tf.layers.dropout(attention, rate=self.config.dropout, training=self.config.training)
@@ -89,21 +94,8 @@ class BiDAF_SelfAttention:
             bigru, _ = util.bidirectional_dynamic_rnn(self.attention, self.c_len, self.config.cell_size)
             bigru = tf.concat(bigru, axis=2)
 
-            self_attention_1 = util.multihead_attention(
-                Q=bigru, K=bigru, V=bigru,
-                mask=self.c_mask,
-                heads=self.config.num_heads,
-                dropout=self.config.dropout,
-                scope='self-attention-1',
-                training=self.config.training)
-
-            self_attention_2 = util.multihead_attention(
-                Q=self_attention_1, K=self_attention_1, V=self_attention_1,
-                mask=self.c_mask,
-                heads=self.config.num_heads,
-                dropout=self.config.dropout,
-                scope='self-attention-2',
-                training=self.config.training)
+            self_attention_1 = self_attention(bigru)
+            self_attention_2 = self_attention(self_attention_1)
 
             self_attention = util.gated_connection(self_attention_1, self_attention_2)
 
