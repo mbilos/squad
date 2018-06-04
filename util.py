@@ -63,7 +63,7 @@ def multihead_attention(Q, K, V, heads=1, mask=None, dropout=0.0, scope='multihe
             mask = tf.sign(tf.abs(tf.cast(mask, tf.float32)))
             alpha *= mask
 
-        alpha = tf.nn.softmax(alpha, 1)
+        alpha = tf.nn.softmax(alpha)
         attended = tf.matmul(alpha, V)
 
         # [batch, max_sentence_len, embedding]
