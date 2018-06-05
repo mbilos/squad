@@ -9,6 +9,7 @@ import evaluate
 from qanet import QANet
 from bidaf import BiDAF
 from bidaf_self_attention import BiDAF_SelfAttention
+from bidaf_conv_input import BiDAF_ConvInput
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
@@ -33,6 +34,8 @@ class Main:
                 self.model = BiDAF(self.config)
             elif self.config.name == 'bidaf-att':
                 self.model = BiDAF_SelfAttention(self.config)
+            elif self.config.name == 'bidaf-conv-input':
+                self.model = BiDAF_ConvInput(self.config)
             else:
                 raise NotImplementedError('Invalid arhitecture name')
 
