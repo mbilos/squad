@@ -86,7 +86,7 @@ class BiDAF_SelfAttention:
             attention = tf.layers.dense(self.attention, self.config.cell_size * 2, activation=tf.nn.relu)
             attention = tf.layers.dropout(attention, rate=self.config.dropout, training=self.config.training)
 
-            bigru, _ = util.bidirectional_dynamic_rnn(self.attention, self.c_len, self.config.cell_size)
+            bigru, _ = util.bidirectional_dynamic_rnn(self.attention, self.c_len, self.config.cell_size, dropout=self.config.dropout)
             bigru = tf.concat(bigru, axis=2)
 
             att_1 = util.multihead_attention(bigru, bigru, bigru, scope='att-1', heads=self.config.num_heads, training=self.config.training)
@@ -94,13 +94,13 @@ class BiDAF_SelfAttention:
 
             self_attention = util.gated_connection(att_1, att_2)
 
-            attention = attention + self_attention
+            attention = tf.concat([bigru, self_attention], -1)
 
         with tf.variable_scope('first-memory') as scope:
-            memory1, _ = util.bidirectional_dynamic_rnn(attention, self.c_len, self.config.cell_size)
+            memory1, _ = util.bidirectional_dynamic_rnn(attention, self.c_len, self.config.cell_size, dropout=self.config.dropout)
             memory1 = tf.concat(memory1, axis=2)
         with tf.variable_scope('second-memory') as scope:
-            memory2, _ = util.bidirectional_dynamic_rnn(memory1, self.c_len, self.config.cell_size)
+            memory2, _ = util.bidirectional_dynamic_rnn(memory1, self.c_len, self.config.cell_size, dropout=self.config.dropout)
             memory2 = tf.concat(memory2, axis=2)
 
         return [memory1, memory2]
@@ -151,8 +151,8 @@ class BiDAF_SelfAttention:
                 q = tf.concat([q, tf.layers.dropout(q_ner_embed, rate=self.config.dropout*0.5, training=self.config.training)], -1)
 
         with tf.variable_scope('contextual-embedding') as scope:
-            c_output, _ = util.bidirectional_dynamic_rnn(c, self.c_len, self.config.cell_size)
-            q_output, _ = util.bidirectional_dynamic_rnn(q, self.q_len, self.config.cell_size, reuse=True)
+            c_output, _ = util.bidirectional_dynamic_rnn(c, self.c_len, self.config.cell_size, dropout=self.config.dropout)
+            q_output, _ = util.bidirectional_dynamic_rnn(q, self.q_len, self.config.cell_size, dropout=self.config.dropout, reuse=True)
 
             c_state = tf.concat(c_output, axis=2)
             q_state = tf.concat(q_output, axis=2)
