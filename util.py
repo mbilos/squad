@@ -46,13 +46,13 @@ def multihead_attention(Q, K, V, heads=1, mask=None, dropout=0.0, scope='multihe
 
         def linear(inputs, shape, scope):
             with tf.variable_scope(scope, reuse=reuse):
-                inputs = tf.layers.dense(inputs, shape[-1], use_bias=False, reuse=reuse)
+                inputs = tf.layers.conv1d(inputs, shape[-1], 1, use_bias=False, padding='SAME')
                 inputs = tf.layers.dropout(inputs, rate=dropout, training=training)
                 inputs = tf.reshape(inputs, [-1] + shape[1:-1] + [heads, shape[-1] // heads])
                 return tf.transpose(inputs, [0, 2, 1, 3]) # [batch, heads, max_sentence_len, embedding / heads]
 
         Q, K, V = linear(Q, k_shape, 'query'), linear(K, k_shape, 'key'), linear(V, v_shape, 'value')
-        Q = Q * ((k_shape[-1] // heads) ** -0.5)
+        Q *= tf.rsqrt(tf.to_float(k_shape[-1] // heads))
 
         # [batch, heads, max_sentence_len, embedding / heads]
         alpha = tf.matmul(Q, K, transpose_b=True)
@@ -60,8 +60,9 @@ def multihead_attention(Q, K, V, heads=1, mask=None, dropout=0.0, scope='multihe
         if mask is not None:
             # [batch, max_len] -> [batch, heads, max_len, max_len]
             mask = tf.tile(tf.reshape(mask, [-1, 1, 1, k_shape[1]]), [1, heads, k_shape[1], 1])
-            mask = tf.sign(tf.abs(tf.cast(mask, tf.float32)))
-            alpha *= mask
+            # 1 -> 0 | 0 -> -1e30 | softmax(-1e30) -> 0
+            mask = (1 - tf.sign(tf.abs(tf.cast(mask, tf.float32)))) * (-1e30)
+            alpha += mask
 
         alpha = tf.nn.softmax(alpha)
         attended = tf.matmul(alpha, V)
@@ -69,10 +70,10 @@ def multihead_attention(Q, K, V, heads=1, mask=None, dropout=0.0, scope='multihe
         # [batch, max_sentence_len, embedding]
         attended = tf.reshape(tf.transpose(attended, [0, 2, 1, 3]), [-1] + v_shape[1:])
 
-        attended = tf.layers.dense(attended, v_shape[-1], use_bias=False, reuse=reuse)
+        attended = tf.layers.conv1d(attended, v_shape[-1], 1, use_bias=False, padding='SAME')
         attended = tf.layers.dropout(attended, rate=dropout, training=training)
 
-        return attended
+        return attended, alpha
 
 
 def gated_connection(prev, current, scope='gated-connection', reuse=None):
