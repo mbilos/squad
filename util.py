@@ -48,7 +48,7 @@ def multihead_attention(Q, K, V, heads=1, mask=None, dropout=0.0, scope='multihe
             with tf.variable_scope(scope, reuse=reuse):
                 inputs = tf.layers.conv1d(inputs, shape[-1], 1, use_bias=False, padding='SAME')
                 inputs = tf.layers.dropout(inputs, rate=dropout, training=training)
-                inputs = tf.reshape(inputs, [-1] + shape[1:-1] + [heads, shape[-1] // heads])
+                inputs = tf.reshape(inputs, shape[:-1] + [heads, shape[-1] // heads])
                 return tf.transpose(inputs, [0, 2, 1, 3]) # [batch, heads, max_sentence_len, embedding / heads]
 
         Q, K, V = linear(Q, k_shape, 'query'), linear(K, k_shape, 'key'), linear(V, v_shape, 'value')
@@ -68,7 +68,9 @@ def multihead_attention(Q, K, V, heads=1, mask=None, dropout=0.0, scope='multihe
         attended = tf.matmul(alpha, V)
 
         # [batch, max_sentence_len, embedding]
-        attended = tf.reshape(tf.transpose(attended, [0, 2, 1, 3]), [-1] + v_shape[1:])
+        attended = tf.transpose(attended, [0, 2, 1, 3])
+        a_shape = get_shape(attended)
+        attended = tf.reshape(attended, a_shape[:-2] + [a_shape[-2] * a_shape[-1]])
 
         attended = tf.layers.conv1d(attended, v_shape[-1], 1, use_bias=False, padding='SAME')
         attended = tf.layers.dropout(attended, rate=dropout, training=training)
