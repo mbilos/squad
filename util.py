@@ -73,7 +73,7 @@ def multihead_attention(Q, K, V, heads=1, mask=None, dropout=0.0, scope='multihe
         attended = tf.layers.conv1d(attended, v_shape[-1], 1, use_bias=False, padding='SAME')
         attended = tf.layers.dropout(attended, rate=dropout, training=training)
 
-        return attended, alpha
+        return attended
 
 
 def gated_connection(prev, current, scope='gated-connection', reuse=None):
