@@ -93,12 +93,12 @@ class BiDAF_SelfAttention:
                 dropout=self.config.dropout, scope='att-1', training=self.config.training)
             self_att_1 = util.layer_norm(self_att_1, 'ln-2')
 
-            self_att_2, t = util.multihead_attention(self_att_1, self_att_1, self_att_1, self.config.num_heads, self.c_mask,
+            self_att_2 = util.multihead_attention(self_att_1, self_att_1, self_att_1, self.config.num_heads, self.c_mask,
                 dropout=self.config.dropout, scope='att-2', training=self.config.training)
             self_att_2 = util.layer_norm(self_att_2, 'ln-3')
 
             self_attention = util.gated_connection(self_att_1, self_att_2)
-            memory1 += self_attention
+            memory1 = tf.concat([self_attention, memory1], -1)
 
         with tf.variable_scope('second-memory') as scope:
             memory2, _ = util.bidirectional_dynamic_rnn(memory1, self.c_len, self.config.cell_size)
