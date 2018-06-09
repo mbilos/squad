@@ -72,6 +72,10 @@ class QANet:
         def residual_block(x, j):
             with tf.variable_scope('residual-block-%d' %j):
                 ln = util.layer_norm(x, reuse=reuse)
+
+                if (j + 1) % 2 == 0:
+                    ln = tf.layers.dropout(ln, rate=self.config.dropout, training=self.config.training)
+
                 conv = util.depthwise_separable_conv(
                     ln,
                     filters=self.config.filters,
@@ -80,9 +84,6 @@ class QANet:
                     dropout=self.config.dropout,
                     reuse=reuse,
                     training=self.config.training)
-
-                if (j + 1) % 2 == 0:
-                    conv = tf.layers.dropout(conv, rate=self.config.dropout, training=self.config.training)
 
                 return conv
 
@@ -102,17 +103,18 @@ class QANet:
 
                     with tf.variable_scope('self-attention'):
                         ln = util.layer_norm(conv[-1], reuse=reuse)
-                        self_attention = util.multihead_attention(
-                            Q=ln,
-                            K=ln,
-                            V=ln,
-                            mask=mask,
-                            heads=self.config.num_heads,
-                            dropout=self.config.dropout,
-                            reuse=reuse,
-                            training=self.config.training)
+                        ln = tf.layers.dropout(ln, rate=self.config.dropout, training=self.config.training)
 
-                        self_attention = self_attention + conv[-1]
+                        self_attention = util._multihead_attention(ln,
+                            self.config.filters,
+                            num_heads=self.config.num_heads,
+                            reuse=reuse,
+                            mask=mask,
+                            is_training=self.config.training,
+                            bias=False,
+                            dropout=self.config.dropout)
+
+                        self_attention = layer_dropout(conv[-1], self_attention, (i + 1) / num_blocks * self.config.dropout)
 
                     with tf.variable_scope('feedforward'):
                         ln = util.layer_norm(self_attention, reuse=reuse)
