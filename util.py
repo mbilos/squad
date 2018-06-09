@@ -80,6 +80,75 @@ def multihead_attention(Q, K, V, heads=1, mask=None, dropout=0.0, scope='multihe
 
         return attended
 
+def _multihead_attention(queries, units, num_heads,
+                        memory = None,
+                        scope = "Multi_Head_Attention",
+                        reuse = None,
+                        mask = None,
+                        is_training = True,
+                        bias = True,
+                        dropout = 0.0):
+    # copied from https://github.com/NLPLearn/QANet/blob/master/layers.py
+    def split_last_dimension(x, n):
+        old_shape = x.get_shape().dims
+        last = old_shape[-1]
+        new_shape = old_shape[:-1] + [n] + [last // n if last else None]
+        ret = tf.reshape(x, tf.concat([tf.shape(x)[:-1], [n, -1]], 0))
+        ret.set_shape(new_shape)
+        return tf.transpose(ret,[0,2,1,3])
+
+    def combine_last_two_dimensions(x):
+        old_shape = x.get_shape().dims
+        a, b = old_shape[-2:]
+        new_shape = old_shape[:-2] + [a * b if a and b else None]
+        ret = tf.reshape(x, tf.concat([tf.shape(x)[:-2], [-1]], 0))
+        ret.set_shape(new_shape)
+        return ret
+
+    def dot_product_attention(q,
+                          k,
+                          v,
+                          bias,
+                          mask = None,
+                          is_training = True,
+                          scope=None,
+                          reuse = None,
+                          dropout = 0.0):
+        with tf.variable_scope(scope, default_name="dot_product_attention", reuse = reuse):
+            logits = tf.matmul(q, k, transpose_b=True)
+            if bias:
+                b = tf.get_variable("bias",
+                        logits.shape[-1],
+                        regularizer=regularizer,
+                        initializer = tf.zeros_initializer())
+                logits += b
+            if mask is not None:
+                shapes = [x  if x != None else -1 for x in logits.shape.as_list()]
+                mask = tf.reshape(mask, [shapes[0],1,1,shapes[-1]])
+                logits = mask_logits(logits, mask)
+            weights = tf.nn.softmax(logits, name="attention_weights")
+            weights = tf.nn.dropout(weights, 1.0 - dropout)
+            return tf.matmul(weights, v)
+
+    with tf.variable_scope(scope, reuse = reuse):
+        if memory is None:
+            memory = queries
+
+        memory = tf.layers.conv1d(memory, 2 * units, 1, name="memory_projection", reuse = reuse)
+        query = tf.layers.conv1d(queries, units, 1, name="query_projection", reuse = reuse)
+        Q = split_last_dimension(query, num_heads)
+        K, V = [split_last_dimension(tensor, num_heads) for tensor in tf.split(memory,2,axis = 2)]
+
+        key_depth_per_head = units // num_heads
+        Q *= key_depth_per_head**-0.5
+        x = dot_product_attention(Q,K,V,
+                                  bias = bias,
+                                  mask = mask,
+                                  is_training = is_training,
+                                  scope = "dot_product_attention",
+                                  reuse = reuse, dropout = dropout)
+        return combine_last_two_dimensions(tf.transpose(x,[0,2,1,3]))
+
 
 def gated_connection(prev, current, scope='gated-connection', reuse=None):
     with tf.variable_scope(scope, reuse=reuse):
