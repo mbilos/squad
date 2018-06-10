@@ -93,7 +93,7 @@ class BiDAF_SelfAttention:
             res = tf.layers.dense(res, self.config.cell_size * 2, activation=tf.nn.relu)
             res = tf.layers.dropout(res, rate=self.config.dropout, training=self.config.training)
 
-            res += memory1
+            res += self.attention
 
         with tf.variable_scope('second-memory') as scope:
             memory2, _ = self.rnn(res, self.c_len)
