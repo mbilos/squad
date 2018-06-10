@@ -70,7 +70,7 @@ class BiDAF:
 
     def output(self):
         with tf.variable_scope('start-index') as scope:
-            start_linear = tf.concat([self.attention, self.modeling[-2]], -1)
+            start_linear = tf.concat([self.attention, self.modeling[-1]], -1)
             start_linear = tf.squeeze(tf.layers.dense(start_linear, 1), -1)
             pred_start = tf.nn.softmax(start_linear)
 
@@ -96,15 +96,7 @@ class BiDAF:
         with tf.variable_scope('attention'):
             c, q = self.c_encoded, self.q_encoded
 
-            w_dot = tf.get_variable('w-dot', [1, 1, self.config.cell_size * 2], tf.float32)
-            c_dot = c * w_dot
-
-            c_proj = tf.layers.dense(c, 1, use_bias=False)
-            q_proj = tf.transpose(tf.layers.dense(q, 1, use_bias=False), [0,2,1])
-
-            c_q = tf.matmul(c_dot, q, transpose_b=True)
-
-            similarity = c_proj + q_proj + c_q
+            similarity = util.trilinear(c, q)
 
             row_norm = tf.nn.softmax(similarity)
             A = tf.matmul(row_norm, q) # context to query

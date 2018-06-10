@@ -150,6 +150,21 @@ def _multihead_attention(queries, units, num_heads,
         return combine_last_two_dimensions(tf.transpose(x,[0,2,1,3]))
 
 
+def trilinear(c, q, scope='trilinear', reuse=None):
+    with tf.variable_scope(scope, reuse=reuse):
+        shape = get_shape(c)
+
+        w_dot = tf.get_variable('w-dot', [1, 1, shape[-1]], tf.float32)
+        c_dot = c * w_dot
+
+        c_proj = tf.layers.dense(c, 1, use_bias=False)
+        q_proj = tf.transpose(tf.layers.dense(q, 1, use_bias=False), [0, 2, 1])
+
+        c_q = tf.matmul(c_dot, q, transpose_b=True)
+
+        return c_proj + q_proj + c_q
+
+
 def gated_connection(prev, current, scope='gated-connection', reuse=None):
     with tf.variable_scope(scope, reuse=reuse):
         shape = current.get_shape().as_list()
