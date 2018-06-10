@@ -25,11 +25,11 @@ class BiDAF_SelfAttention:
             self.q_pos = tf.placeholder(tf.int32, [None, self.config.question_len], 'query-part-of-speech')
             self.q_ner = tf.placeholder(tf.int32, [None, self.config.question_len], 'query-named-entity')
 
-            self.c_mask = tf.reduce_sum(self.c_words, -1)
-            self.q_mask = tf.reduce_sum(self.q_words, -1)
+            self.c_mask = tf.cast(tf.cast(tf.reduce_sum(self.c_words, -1), tf.bool), tf.float32)
+            self.q_mask = tf.cast(tf.cast(tf.reduce_sum(self.q_words, -1), tf.bool), tf.float32)
 
-            self.c_len = tf.cast(tf.reduce_sum(tf.sign(tf.abs(self.c_mask)), -1), tf.int32)
-            self.q_len = tf.cast(tf.reduce_sum(tf.sign(tf.abs(self.q_mask)), -1), tf.int32)
+            self.c_len = tf.cast(tf.reduce_sum(self.c_mask, -1), tf.int32)
+            self.q_len = tf.cast(tf.reduce_sum(self.q_mask, -1), tf.int32)
 
             self.start = tf.placeholder(tf.int32, [None], 'start-index')
             self.end = tf.placeholder(tf.int32, [None], 'end-index')
@@ -75,8 +75,7 @@ class BiDAF_SelfAttention:
 
         with tf.variable_scope('end-index') as scope:
             end_input = tf.concat([tf.expand_dims(start_linear, -1), self.modeling[-1]], -1)
-            memory, _ = util.bidirectional_dynamic_rnn(end_input, self.c_len, self.config.cell_size, dropout=self.config.dropout)
-            memory = tf.concat(memory, axis=2)
+            memory, _ = self.rnn(end_input, self.c_len)
 
             end_linear = tf.squeeze(tf.layers.dense(memory, 1), -1)
             pred_end = tf.nn.softmax(end_linear)
@@ -85,40 +84,27 @@ class BiDAF_SelfAttention:
 
     def model_encoder(self):
         with tf.variable_scope('first-memory') as scope:
-            memory1, _ = util.bidirectional_dynamic_rnn(self.attention, self.c_len, self.config.cell_size, dropout=self.config.dropout)
-            memory1 = tf.concat(memory1, axis=2)
+            memory1, _ = self.rnn(self.attention, self.c_len)
 
-        with tf.variable_scope('first-self-attention') as scope:
-            att1 = util.multihead_attention(memory1, memory1, memory1, self.config.num_heads, self.c_mask,
-                dropout=self.config.dropout, training=self.config.training)
+        with tf.variable_scope('self-attention') as scope:
+            att = util.trilinear(memory1, memory1) - 1e30 * tf.eye(self.config.context_len)
+            att = tf.nn.softmax(att)
+            res = tf.matmul(att, memory1)
+            res = tf.layers.dense(res, self.config.cell_size * 2, activation=tf.nn.relu)
+            res = tf.layers.dropout(res, rate=self.config.dropout, training=self.config.training)
+
+            res += memory1
 
         with tf.variable_scope('second-memory') as scope:
-            memory2, _ = util.bidirectional_dynamic_rnn(att1, self.c_len, self.config.cell_size, dropout=self.config.dropout)
-            memory2 = tf.concat(memory2, axis=2)
+            memory2, _ = self.rnn(res, self.c_len)
 
-        with tf.variable_scope('second-self-attention') as scope:
-            att2 = util.multihead_attention(memory2, memory2, memory2, self.config.num_heads, self.c_mask,
-                dropout=self.config.dropout, training=self.config.training)
-
-        with tf.variable_scope('blending') as scope:
-            self_attention = util.gated_connection(att1, att2)
-            memory = tf.concat([memory1, self_attention], -1)
-
-        with tf.variable_scope('third-memory') as scope:
-            memory3, _ = util.bidirectional_dynamic_rnn(memory, self.c_len, self.config.cell_size, dropout=self.config.dropout)
-            memory3 = tf.concat(memory3, axis=2)
-
-        return [memory3]
+        return [memory1, memory2]
 
     def attention_flow(self):
         with tf.variable_scope('attention'):
             c, q = self.c_encoded, self.q_encoded
 
-            c_tile = tf.tile(tf.expand_dims(c, 2), [1, 1, self.config.question_len, 1])
-            q_tile = tf.tile(tf.expand_dims(q, 1), [1, self.config.context_len, 1, 1])
-
-            similarity = tf.concat([c_tile, q_tile, c_tile * q_tile], -1)
-            similarity = tf.squeeze(tf.layers.dense(similarity, 1, use_bias=False), -1)
+            similarity = util.trilinear(c, q)
 
             row_norm = tf.nn.softmax(similarity)
             A = tf.matmul(row_norm, q) # context to query
@@ -127,6 +113,8 @@ class BiDAF_SelfAttention:
             B = tf.matmul(tf.matmul(row_norm, column_norm, transpose_b=True), c) # query to context
 
             attention = tf.concat([c, A, c * A, c * B], -1)
+            attention = tf.layers.dense(attention, self.config.cell_size * 2, activation=tf.nn.relu)
+            attention = tf.layers.dropout(attention, rate=self.config.dropout, training=self.config.training)
 
             return attention
 
@@ -157,31 +145,28 @@ class BiDAF_SelfAttention:
 
         with tf.variable_scope('highway'):
             with tf.variable_scope('highway-1'):
-                c_h1 = tf.layers.conv1d(c, self.config.embed_size, 1, activation=tf.nn.relu)
+                c_h1 = tf.layers.dense(c, self.config.embed_size, activation=tf.nn.relu)
                 c_h1 = tf.layers.dropout(c_h1, rate=self.config.dropout, training=self.config.training)
                 c_h1 = util.gated_connection(c, c_h1)
 
-                q_h1 = tf.layers.conv1d(q, self.config.embed_size, 1, activation=tf.nn.relu, reuse=True)
+                q_h1 = tf.layers.dense(q, self.config.embed_size, activation=tf.nn.relu, reuse=True)
                 q_h1 = tf.layers.dropout(q_h1, rate=self.config.dropout, training=self.config.training)
                 q_h1 = util.gated_connection(q, q_h1, reuse=True)
 
             with tf.variable_scope('highway-2'):
-                c_h2 = tf.layers.conv1d(c_h1, self.config.embed_size, 1, activation=tf.nn.relu)
+                c_h2 = tf.layers.dense(c_h1, self.config.embed_size, activation=tf.nn.relu)
                 c_h2 = tf.layers.dropout(c_h2, rate=self.config.dropout, training=self.config.training)
                 c_h2 = util.gated_connection(c_h1, c_h2)
 
-                q_h2 = tf.layers.conv1d(q_h1, self.config.embed_size, 1, activation=tf.nn.relu, reuse=True)
+                q_h2 = tf.layers.dense(q_h1, self.config.embed_size, activation=tf.nn.relu, reuse=True)
                 q_h2 = tf.layers.dropout(q_h2, rate=self.config.dropout, training=self.config.training)
                 q_h2 = util.gated_connection(q_h1, q_h2, reuse=True)
 
         with tf.variable_scope('contextual-embedding') as scope:
-            c_output, _ = util.bidirectional_dynamic_rnn(c_h2, self.c_len, self.config.cell_size, dropout=self.config.dropout)
-            q_output, _ = util.bidirectional_dynamic_rnn(q_h2, self.q_len, self.config.cell_size, reuse=True, dropout=self.config.dropout)
+            c_output, _ = self.rnn(c_h2, self.c_len)
+            q_output, _ = self.rnn(q_h2, self.q_len, reuse=True)
 
-            c_state = tf.concat(c_output, axis=2)
-            q_state = tf.concat(q_output, axis=2)
-
-        return c_state, q_state
+        return c_output, q_output
 
     def char_embedding(self):
         with tf.variable_scope('char-embedding'):
@@ -200,3 +185,12 @@ class BiDAF_SelfAttention:
             q = tf.reduce_max(q, axis=2)
 
             return c, q
+
+    def rnn(self, inputs, sequence_length, reuse=None):
+        return util.bidirectional_dynamic_rnn(
+            inputs,
+            sequence_length,
+            self.config.cell_size,
+            dropout=self.config.dropout,
+            concat=True,
+            reuse=reuse)
