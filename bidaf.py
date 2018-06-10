@@ -25,11 +25,11 @@ class BiDAF:
             self.q_pos = tf.placeholder(tf.int32, [None, self.config.question_len], 'query-part-of-speech')
             self.q_ner = tf.placeholder(tf.int32, [None, self.config.question_len], 'query-named-entity')
 
-            self.c_mask = tf.reduce_sum(self.c_words, -1)
-            self.q_mask = tf.reduce_sum(self.q_words, -1)
+            self.c_mask = tf.cast(tf.cast(tf.reduce_sum(self.c_words, -1), tf.bool), tf.float32)
+            self.q_mask = tf.cast(tf.cast(tf.reduce_sum(self.q_words, -1), tf.bool), tf.float32)
 
-            self.c_len = tf.cast(tf.reduce_sum(tf.sign(tf.abs(self.c_mask)), -1), tf.int32)
-            self.q_len = tf.cast(tf.reduce_sum(tf.sign(tf.abs(self.q_mask)), -1), tf.int32)
+            self.c_len = tf.cast(tf.reduce_sum(self.c_mask, -1), tf.int32)
+            self.q_len = tf.cast(tf.reduce_sum(self.q_mask, -1), tf.int32)
 
             self.start = tf.placeholder(tf.int32, [None], 'start-index')
             self.end = tf.placeholder(tf.int32, [None], 'end-index')
@@ -75,34 +75,36 @@ class BiDAF:
             pred_start = tf.nn.softmax(start_linear)
 
         with tf.variable_scope('end-index') as scope:
-            end_linear = tf.concat([self.attention, self.modeling[-1], tf.expand_dims(pred_start, -1)], -1)
-            end_linear = tf.squeeze(tf.layers.dense(end_linear, 1), -1)
+            end_input = tf.concat([tf.expand_dims(start_linear, -1), self.attention, self.modeling[-1]], -1)
+            memory, _ = util.bidirectional_dynamic_rnn(end_input, self.c_len, self.config.cell_size,
+                dropout=self.config.dropout, concat=True)
+
+            end_linear = tf.squeeze(tf.layers.dense(memory, 1), -1)
             pred_end = tf.nn.softmax(end_linear)
 
         return start_linear, end_linear, pred_start, pred_end
 
     def model_encoder(self):
         with tf.variable_scope('first-memory') as scope:
-            memory1, _ = util.bidirectional_dynamic_rnn(self.attention, self.c_len, self.config.cell_size)
-            memory1 = tf.concat(memory1, axis=2)
+            memory1, _ = util.bidirectional_dynamic_rnn(self.attention, self.c_len, self.config.cell_size, concat=True)
         with tf.variable_scope('second-memory') as scope:
-            memory2, _ = util.bidirectional_dynamic_rnn(memory1, self.c_len, self.config.cell_size)
-            memory2 = tf.concat(memory2, axis=2)
-        with tf.variable_scope('third-memory') as scope:
-            memory3, _ = util.bidirectional_dynamic_rnn(memory2, self.c_len, self.config.cell_size)
-            memory3 = tf.concat(memory3, axis=2)
+            memory2, _ = util.bidirectional_dynamic_rnn(memory1, self.c_len, self.config.cell_size, concat=True)
 
-        return [memory1, memory2, memory3]
+        return [memory1, memory2]
 
     def attention_flow(self):
         with tf.variable_scope('attention'):
             c, q = self.c_encoded, self.q_encoded
 
-            c_tile = tf.tile(tf.expand_dims(c, 2), [1, 1, self.config.question_len, 1])
-            q_tile = tf.tile(tf.expand_dims(q, 1), [1, self.config.context_len, 1, 1])
+            w_dot = tf.get_variable('w-dot', [1, 1, self.config.cell_size * 2], tf.float32)
+            c_dot = c * w_dot
 
-            similarity = tf.concat([c_tile, q_tile, c_tile * q_tile], -1)
-            similarity = tf.squeeze(tf.layers.dense(similarity, 1, use_bias=False), -1)
+            c_proj = tf.layers.dense(c, 1, use_bias=False)
+            q_proj = tf.transpose(tf.layers.dense(q, 1, use_bias=False), [0,2,1])
+
+            c_q = tf.matmul(c_dot, q, transpose_b=True)
+
+            similarity = c_proj + q_proj + c_q
 
             row_norm = tf.nn.softmax(similarity)
             A = tf.matmul(row_norm, q) # context to query
@@ -159,13 +161,10 @@ class BiDAF:
                 q_h2 = util.gated_connection(q_h1, q_h2, reuse=True)
 
         with tf.variable_scope('contextual-embedding') as scope:
-            c_output, _ = util.bidirectional_dynamic_rnn(c_h2, self.c_len, self.config.cell_size)
-            q_output, _ = util.bidirectional_dynamic_rnn(q_h2, self.q_len, self.config.cell_size, reuse=True)
+            c_output, _ = util.bidirectional_dynamic_rnn(c_h2, self.c_len, self.config.cell_size, concat=True)
+            q_output, _ = util.bidirectional_dynamic_rnn(q_h2, self.q_len, self.config.cell_size, concat=True, reuse=True)
 
-            c_state = tf.concat(c_output, axis=2)
-            q_state = tf.concat(q_output, axis=2)
-
-        return c_state, q_state
+        return c_output, q_output
 
     def char_embedding(self):
         with tf.variable_scope('char-embedding'):
