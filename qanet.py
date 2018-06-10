@@ -25,8 +25,8 @@ class QANet:
             self.q_pos = tf.placeholder(tf.int32, [None, self.config.question_len], 'query-part-of-speech')
             self.q_ner = tf.placeholder(tf.int32, [None, self.config.question_len], 'query-named-entity')
 
-            self.c_mask = tf.reduce_sum(self.c_words, -1)
-            self.q_mask = tf.reduce_sum(self.q_words, -1)
+            self.c_mask = tf.cast(tf.cast(tf.reduce_sum(self.c_words, -1), tf.bool), tf.float32)
+            self.q_mask = tf.cast(tf.cast(tf.reduce_sum(self.q_words, -1), tf.bool), tf.float32)
 
             self.start = tf.placeholder(tf.int32, [None], 'start-index')
             self.end = tf.placeholder(tf.int32, [None], 'end-index')
