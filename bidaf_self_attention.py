@@ -70,12 +70,11 @@ class BiDAF_SelfAttention:
 
     def output(self):
         with tf.variable_scope('start-index') as scope:
-            start_linear = tf.concat([self.attention, self.modeling[-1]], -1)
-            start_linear = tf.squeeze(tf.layers.dense(start_linear, 1), -1)
+            start_linear = tf.squeeze(tf.layers.dense(self.modeling[-1], 1), -1)
             pred_start = tf.nn.softmax(start_linear)
 
         with tf.variable_scope('end-index') as scope:
-            end_input = tf.concat([tf.expand_dims(start_linear, -1), self.attention, self.modeling[-1]], -1)
+            end_input = tf.concat([tf.expand_dims(start_linear, -1), self.modeling[-1]], -1)
             memory, _ = self.rnn(end_input, self.c_len)
 
             end_linear = tf.squeeze(tf.layers.dense(memory, 1), -1)
@@ -144,28 +143,9 @@ class BiDAF_SelfAttention:
                 c = tf.concat([c, tf.layers.dropout(c_ner_embed, rate=self.config.dropout*0.5, training=self.config.training)], -1)
                 q = tf.concat([q, tf.layers.dropout(q_ner_embed, rate=self.config.dropout*0.5, training=self.config.training)], -1)
 
-        with tf.variable_scope('highway'):
-            with tf.variable_scope('highway-1'):
-                c_h1 = tf.layers.dense(c, self.config.embed_size, activation=tf.nn.relu)
-                c_h1 = tf.layers.dropout(c_h1, rate=self.config.dropout, training=self.config.training)
-                c_h1 = util.gated_connection(c, c_h1)
-
-                q_h1 = tf.layers.dense(q, self.config.embed_size, activation=tf.nn.relu, reuse=True)
-                q_h1 = tf.layers.dropout(q_h1, rate=self.config.dropout, training=self.config.training)
-                q_h1 = util.gated_connection(q, q_h1, reuse=True)
-
-            with tf.variable_scope('highway-2'):
-                c_h2 = tf.layers.dense(c_h1, self.config.embed_size, activation=tf.nn.relu)
-                c_h2 = tf.layers.dropout(c_h2, rate=self.config.dropout, training=self.config.training)
-                c_h2 = util.gated_connection(c_h1, c_h2)
-
-                q_h2 = tf.layers.dense(q_h1, self.config.embed_size, activation=tf.nn.relu, reuse=True)
-                q_h2 = tf.layers.dropout(q_h2, rate=self.config.dropout, training=self.config.training)
-                q_h2 = util.gated_connection(q_h1, q_h2, reuse=True)
-
         with tf.variable_scope('contextual-embedding') as scope:
-            c_output, _ = self.rnn(c_h2, self.c_len)
-            q_output, _ = self.rnn(q_h2, self.q_len, reuse=True)
+            c_output, _ = self.rnn(c, self.c_len)
+            q_output, _ = self.rnn(q, self.q_len, reuse=True)
 
         return c_output, q_output
 
