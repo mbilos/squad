@@ -70,11 +70,12 @@ class BiDAF_SelfAttention:
 
     def output(self):
         with tf.variable_scope('start-index') as scope:
-            start_linear = tf.squeeze(tf.layers.dense(self.modeling[-1], 1), -1)
+            start_linear = tf.concat([self.attention, self.modeling[-1]], -1)
+            start_linear = tf.squeeze(tf.layers.dense(start_linear, 1), -1)
             pred_start = tf.nn.softmax(start_linear)
 
         with tf.variable_scope('end-index') as scope:
-            end_input = tf.concat([tf.expand_dims(start_linear, -1), self.modeling[-1]], -1)
+            end_input = tf.concat([tf.expand_dims(start_linear, -1), self.attention, self.modeling[-1]], -1)
             memory, _ = self.rnn(end_input, self.c_len)
 
             end_linear = tf.squeeze(tf.layers.dense(memory, 1), -1)
