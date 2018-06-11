@@ -10,6 +10,7 @@ from qanet import QANet
 from bidaf import BiDAF
 from bidaf_self_attention import BiDAF_SelfAttention
 from bidaf_conv_input import BiDAF_ConvInput
+from mnemonic import MnemonicReader
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
@@ -36,6 +37,8 @@ class Main:
                 self.model = BiDAF_SelfAttention(self.config)
             elif self.config.name == 'bidaf-conv-input':
                 self.model = BiDAF_ConvInput(self.config)
+            elif self.config.name == 'mnemonic':
+                self.model = MnemonicReader(self.config)
             else:
                 raise NotImplementedError('Invalid arhitecture name')
 
@@ -215,6 +218,10 @@ class Main:
 
         # bidaf specific
         parser.add_argument('--cell_size', default = 128, type=int)
+
+        # mnemonic specific
+        parser.add_argument('--aligner_hops', default = 2, type=int)
+        parser.add_argument('--pointer_hops', default = 2, type=int)
 
         args = parser.parse_args()
         args.training = args.mode == 'train'
