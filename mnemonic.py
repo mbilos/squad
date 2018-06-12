@@ -100,7 +100,7 @@ class MnemonicReader:
                 start, p_start, z_s, end, p_end, z_e = hop(self.modeling[-1], start_memory[-1])
                 start_memory.append(z_s)
 
-        return start, p_start, end, p_end
+        return start, end, p_start, p_end
 
     def iterative_aligner(self):
         def hop(c, q):
