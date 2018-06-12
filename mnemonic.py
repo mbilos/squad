@@ -7,7 +7,7 @@ class MnemonicReader:
         self.config = config
 
         self.global_step = tf.get_variable('global_step', shape=[], dtype=tf.int32, initializer=tf.constant_initializer(0), trainable=False)
-        self.lr = tf.minimum(self.config.learning_rate, self.config.learning_rate / tf.log(999.) * tf.log(tf.cast(self.global_step, tf.float32) + 1))
+        self.lr = self.config.learning_rate
 
         self.input()
         self.forward()
@@ -73,7 +73,7 @@ class MnemonicReader:
                 z = tf.tile(tf.expand_dims(z, 1), [1, self.config.context_len, 1])
                 s = tf.concat([c, z, c * z], -1)
                 with tf.variable_scope('relu'):
-                    s = tf.layers.dense(s, self.config.cell_size, activation=tf.nn.relu)
+                    s = tf.layers.dense(s, self.config.cell_size * 6, activation=tf.nn.relu)
                     s = tf.layers.dropout(s, rate=self.config.dropout, training=self.config.training)
                 with tf.variable_scope('linear'):
                     s = tf.squeeze(tf.layers.dense(s, 1, use_bias=False), -1)
