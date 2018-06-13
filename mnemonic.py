@@ -49,18 +49,6 @@ class MnemonicReader:
             grads_and_vars = zip(grads, tf.trainable_variables())
             self.optimize = optimizer.apply_gradients(grads_and_vars, global_step=self.global_step)
 
-        with tf.variable_scope('ema') as scope:
-            ema = tf.train.ExponentialMovingAverage(decay=self.config.ema_decay)
-            ema_op = ema.apply(tf.trainable_variables())
-            with tf.control_dependencies([ema_op]):
-                self.loss = tf.identity(self.loss)
-                assign_vars = []
-                for var in tf.global_variables():
-                    v = ema.average(var)
-                    if v:
-                        assign_vars.append(tf.assign(var,v))
-            self.assign_vars = assign_vars
-
     def forward(self):
         self.c_char_embed, self.q_char_embed = self.char_embedding()
         self.c_encoded, self.q_encoded, self.q_state = self.input_encoder()
@@ -77,7 +65,8 @@ class MnemonicReader:
                     s = tf.layers.dropout(s, rate=self.config.dropout, training=self.config.training)
                 with tf.variable_scope('linear'):
                     s = tf.squeeze(tf.layers.dense(s, 1, use_bias=False), -1)
-                return s, tf.nn.softmax(s)
+                    p = tf.nn.softmax(s - 1e30 * (1 - self.c_mask))
+                return s, p
 
         def memory(c, p, z, scope):
             with tf.variable_scope(scope):
@@ -117,14 +106,20 @@ class MnemonicReader:
 
     def self_aligning(self, c,  scope='self-aligner', reuse=None):
         with tf.variable_scope(scope, reuse=reuse):
-            similarity = tf.matmul(c, c, transpose_b=True) - 1e30 * tf.eye(self.config.context_len)
+            shape = util.get_shape(c)
+            proj = tf.layers.dense(c, shape[-1], activation=tf.nn.relu)
+
+            similarity = tf.matmul(proj, proj, transpose_b=True) - 1e30 * tf.eye(self.config.context_len)
+            similarity -= 1e30 * (1 - tf.expand_dims(self.c_mask, 1))
             row_norm = tf.nn.softmax(similarity, -1)
             _c = tf.matmul(row_norm, c)
+
             return self.SFU(c, [_c, c * _c, c - _c])
 
     def interactive_aligning(self, c, q, scope='interactive-aligner', reuse=None):
         with tf.variable_scope(scope, reuse=reuse):
             similarity = tf.matmul(c, q, transpose_b=True)
+            similarity -= 1e30 * (1 - tf.expand_dims(self.q_mask, 1))
             row_norm = tf.nn.softmax(similarity, -1)
             _q = tf.matmul(row_norm, q)
             return self.SFU(c, [_q, c * _q, c - _q])
@@ -135,10 +130,7 @@ class MnemonicReader:
             x = tf.concat([inputs] + fusion, -1)
 
             res = tf.layers.dense(x, shape[-1], activation=tf.nn.tanh)
-            res = tf.layers.dropout(res, rate=self.config.dropout, training=self.config.training)
-
             gate = tf.layers.dense(x, shape[-1], activation=tf.nn.sigmoid)
-            gate = tf.layers.dropout(gate, rate=self.config.dropout, training=self.config.training)
 
             return gate * res + (1 - gate) * inputs
 
