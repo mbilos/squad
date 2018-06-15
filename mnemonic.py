@@ -43,15 +43,13 @@ class MnemonicReader:
             self.loss = loss + lossL2
 
         with tf.variable_scope('optimizer') as scope:
-            optimizer = tf.train.AdamOptimizer(learning_rate=self.lr)
-            grads = tf.gradients(self.loss, tf.trainable_variables())
-            grads, _ = tf.clip_by_global_norm(grads, self.config.grad_clip)
-            grads_and_vars = zip(grads, tf.trainable_variables())
-            self.optimize = optimizer.apply_gradients(grads_and_vars, global_step=self.global_step)
+            optimizer = tf.keras.optimizers.Adamax()
+            trainable = [x for x in tf.trainable_variables() if 'Adamax' not in x.name]
+            self.optimize = optimizer.get_updates(self.loss, trainable)
 
     def forward(self):
         self.c_char_embed, self.q_char_embed = self.char_embedding()
-        self.c_encoded, self.q_encoded, self.q_state = self.input_encoder()
+        self.c_encoded, self.q_encoded = self.input_encoder()
         self.modeling = self.iterative_aligner()
         self.start_linear, self.end_linear, self.pred_start, self.pred_end = self.answer_pointer()
 
@@ -73,20 +71,22 @@ class MnemonicReader:
                 u = tf.squeeze(tf.matmul(c, tf.expand_dims(p, -1), transpose_a=True), -1)
                 return self.SFU(z, [u])
 
-        def hop(c, z_s):
+        def hop(c, z_s, start_memory=True):
             start, p_start = pointer(c, z_s, 'start-pointer')
-            z_e = memory(c, p_start, z_s, 'start-memory')
 
+            z_e = memory(c, p_start, z_s, 'end-memory')
             end, p_end = pointer(c, z_e, 'end-pointer')
-            z_s = memory(c, p_end, z_e, 'end-memory')
+
+            z_s = memory(c, p_end, z_e, 'start-memory') if start_memory else None
 
             return start, p_start, z_s, end, p_end, z_e
 
-        start_memory = [self.q_state]
+        start_memory = [self.q_encoded[:,-1,:]]
 
         for i in range(self.config.pointer_hops):
             with tf.variable_scope('pointer-hop-%d' % i):
-                start, p_start, z_s, end, p_end, z_e = hop(self.modeling[-1], start_memory[-1])
+                calc_start = i + 1 < self.config.pointer_hops
+                start, p_start, z_s, end, p_end, z_e = hop(self.modeling[-1], start_memory[-1], calc_start)
                 start_memory.append(z_s)
 
         return start, end, p_start, p_end
@@ -161,9 +161,9 @@ class MnemonicReader:
 
         with tf.variable_scope('contextual-embedding') as scope:
             c_output, _ = self.rnn(c, self.c_len)
-            q_output, q_state = self.rnn(q, self.q_len, reuse=True)
+            q_output, _ = self.rnn(q, self.q_len, reuse=True)
 
-        return c_output, q_output, q_state
+        return c_output, q_output
 
     def char_embedding(self):
         with tf.variable_scope('char-embedding'):
