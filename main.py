@@ -95,7 +95,6 @@ class Main:
             em += e
             f1 += f
             total += len(batch[0])
-            print(total)
 
         return em / total, f1 / total
 
