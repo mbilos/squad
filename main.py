@@ -84,7 +84,7 @@ class Main:
                         print('best f1: %.2f - current f1: %.2f - new lr: %.2f' % (best_f1, f1, sess.run(self.model.lr)))
 
     def test(self, sess):
-        em = f1 = 0
+        total = em = f1 = 0
         for i in range(0, len(self.devset), 50):
             tokens, c, ch, q, qh, ct, ce, qt, qe, answers = self.get_batch('test', i, i + 50)
             feed = { self.model.c_words: c, self.model.c_chars: ch, self.model.c_pos: ct, self.model.c_ner: ce,
@@ -98,8 +98,9 @@ class Main:
             e, f = evaluate._evaluate(answers, answer_cand)
             em += e
             f1 += f
+            total += 1
 
-        return em / len(self.devset), f1 / len(self.devset)
+        return em / total, f1 / total
 
     def get_best_spans(self, start, end):
         def get_best_span(first, second):
