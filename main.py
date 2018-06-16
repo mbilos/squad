@@ -3,6 +3,7 @@ import argparse
 
 import tensorflow as tf
 import numpy as np
+from tqdm import tqdm
 
 import read
 import evaluate
@@ -57,29 +58,24 @@ class Main:
                 saver.restore(sess, tf.train.latest_checkpoint(save_path))
 
             best_f1 = 0
-            avgloss = 0
+            loss = 0
             step = sess.run(self.model.global_step)
 
-            for i in range(step, self.config.iterations):
+            t = tqdm(range(step, self.config.iterations))
+            for i in t:
                 c, ch, q, qh, ct, ce, qt, qe, s, e = self.batch('train')
                 feed = { self.model.c_words: c, self.model.c_chars: ch, self.model.c_pos: ct, self.model.c_ner: ce,
                          self.model.q_words: q, self.model.q_chars: qh, self.model.q_pos: qt, self.model.q_ner: qe,
                          self.model.start: s, self.model.end: e }
 
                 _, loss = sess.run([self.model.optimize, self.model.loss], feed)
-                avgloss += loss
+                t.set_description('loss: %.2f' % loss)
 
-                if i % self.config.print_every == 0:
-                    em, f1 = self.devtest(sess)
-
-                    print('Iteration:', i, '\tloss:', round(avgloss / self.config.print_every, 2), '\tdev EM:', em, 'f1:', f1)
-                    avgloss = 0
-
-                if i % self.config.save_every == 0:
+                if i > 0 and i % self.config.save_every == 0:
                     saver.save(sess, os.path.join('models', self.config.name, 'model'), global_step=i)
 
                     em, f1 = self.test(sess)
-                    print('Exact match: %.2f\tf1: %.2f' % (em, f1))
+                    print('\nIteration: %d - Exact match: %.2f\tf1: %.2f' % (i, em, f1))
 
                     if f1 > best_f1:
                         best_f1 = f1
@@ -90,34 +86,21 @@ class Main:
     def test(self, sess):
         em = f1 = total = 0
         for i in range(0, len(self.devset), 50):
-            batch = self.batch('test', i, i + 50)
-            e, f = self.eval(batch, sess)
+            tokens, c, ch, q, qh, ct, ce, qt, qe, answers = self.batch('test', i, i + 50)
+            feed = { self.model.c_words: c, self.model.c_chars: ch, self.model.c_pos: ct, self.model.c_ner: ce,
+                    self.model.q_words: q, self.model.q_chars: qh, self.model.q_pos: qt, self.model.q_ner: qe }
+
+            start, end = sess.run([self.model.pred_start, self.model.pred_end], feed)
+            start, end = self.get_best_spans(start, end)
+
+            answer_cand = [' '.join(x[k:l]) for x,k,l in zip(tokens, start, end)]
+
+            e, f = evaluate._evaluate(answers, answer_cand)
             em += e
             f1 += f
-            total += len(batch[0])
+            total += len(tokens)
 
         return em / total, f1 / total
-
-    def devtest(self, sess, iterations=10):
-        em = f1 = 0
-        for j in range(iterations):
-            e, f = self.eval(self.batch('dev'), sess)
-            em += e
-            f1 += f
-        return round(em / iterations, 2), round(f1 / iterations, 2)
-
-    def eval(self, batch, sess):
-        tokens, c, ch, q, qh, ct, ce, qt, qe, answers = batch
-        feed = { self.model.c_words: c, self.model.c_chars: ch, self.model.c_pos: ct, self.model.c_ner: ce,
-                 self.model.q_words: q, self.model.q_chars: qh, self.model.q_pos: qt, self.model.q_ner: qe }
-
-        start, end = sess.run([self.model.pred_start, self.model.pred_end], feed)
-        start, end = self.get_best_spans(start, end)
-
-        answer_cand = [' '.join(x[k:l]) for x,k,l in zip(tokens, start, end)]
-
-        e, f = evaluate._evaluate(answers, answer_cand)
-        return e, f
 
     def get_best_spans(self, start, end):
         def get_best_span(first, second):
