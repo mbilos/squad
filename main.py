@@ -56,6 +56,7 @@ class Main:
             if os.path.exists(save_path):
                 saver.restore(sess, tf.train.latest_checkpoint(save_path))
 
+            best_f1 = 0
             avgloss = 0
             step = sess.run(self.model.global_step)
 
@@ -77,36 +78,47 @@ class Main:
                 if i % self.config.save_every == 0:
                     saver.save(sess, os.path.join('models', self.config.name, 'model'), global_step=i)
 
-    def test(self):
-        with tf.Session() as sess:
-            sess.run(tf.global_variables_initializer())
-            saver = tf.train.Saver()
-            saver.restore(sess, tf.train.latest_checkpoint(os.path.join('models', self.config.name)))
+                    em, f1 = self.test(sess)
+                    print('Exact match: %.2f\tf1: %.2f' % (em, f1))
 
-            em, f1 = self.devtest(sess, 100)
-            print('Exact match:', em, '\tf1:', f1)
+                    if f1 > best_f1:
+                        best_f1 = f1
+                    else:
+                        sess.run(self.model.decay_lr)
+                        print('best f1: %.2f - current f1: %.2f - new lr: %.2f' % (best_f1, f1, sess.run(self.model.lr)))
 
-            sess.run(self.model.assign_vars)
-            em, f1 = self.devtest(sess, 100)
-            print('Exact match:', em, '\tf1:', f1)
+    def test(self, sess):
+        em = f1 = total = 0
+        for i in range(0, len(self.devset), 50):
+            batch = self.batch('test', i, i + 50)
+            e, f = self.eval(batch, sess)
+            em += e
+            f1 += f
+            total += len(batch[0])
+            print(total)
+
+        return em / total, f1 / total
 
     def devtest(self, sess, iterations=10):
         em = f1 = 0
         for j in range(iterations):
-            tokens, c, ch, q, qh, ct, ce, qt, qe, answers = self.batch('dev')
-            feed = { self.model.c_words: c, self.model.c_chars: ch, self.model.c_pos: ct, self.model.c_ner: ce,
-                     self.model.q_words: q, self.model.q_chars: qh, self.model.q_pos: qt, self.model.q_ner: qe }
-
-            start, end = sess.run([self.model.pred_start, self.model.pred_end], feed)
-            start, end = self.get_best_spans(start, end)
-
-            answer_cand = [' '.join(x[k:l]) for x,k,l in zip(tokens, start, end)]
-
-            e, f = evaluate._evaluate(answers, answer_cand)
-
+            e, f = self.eval(self.batch('dev'), sess)
             em += e
             f1 += f
         return round(em / iterations, 2), round(f1 / iterations, 2)
+
+    def eval(self, batch, sess):
+        tokens, c, ch, q, qh, ct, ce, qt, qe, answers = batch
+        feed = { self.model.c_words: c, self.model.c_chars: ch, self.model.c_pos: ct, self.model.c_ner: ce,
+                 self.model.q_words: q, self.model.q_chars: qh, self.model.q_pos: qt, self.model.q_ner: qe }
+
+        start, end = sess.run([self.model.pred_start, self.model.pred_end], feed)
+        start, end = self.get_best_spans(start, end)
+
+        answer_cand = [' '.join(x[k:l]) for x,k,l in zip(tokens, start, end)]
+
+        e, f = evaluate._evaluate(answers, answer_cand)
+        return e, f
 
     def get_best_spans(self, start, end):
         def get_best_span(first, second):
@@ -133,14 +145,17 @@ class Main:
             ends.append(e)
         return np.array(starts), np.array(ends)
 
-    def batch(self, mode='train'):
+    def batch(self, mode='train', start=None, end=None):
         PAD = '='
         UNK = '_'
 
         data = self.trainset if mode == 'train' else self.devset
 
-        indexes = np.random.randint(len(data), size=self.config.batch)
-        batch = [data[i] for i in indexes]
+        if mode == 'test':
+            batch = data[start:end]
+        else:
+            indexes = np.random.randint(len(data), size=self.config.batch)
+            batch = [data[i] for i in indexes]
 
         def _embedding(w):
             if w in self.embed:

@@ -7,7 +7,8 @@ class MnemonicReader:
         self.config = config
 
         self.global_step = tf.get_variable('global_step', shape=[], dtype=tf.int32, initializer=tf.constant_initializer(0), trainable=False)
-        self.lr = self.config.learning_rate
+        self.lr = tf.get_variable('learning-rate', shape=[], dtype=tf.float32, initializer=tf.constant_initializer(self.config.learning_rate))
+        self.decay_lr = tf.assign(self.lr, tf.maximum(self.lr / 2, 1e-6))
 
         self.input()
         self.forward()
@@ -43,9 +44,11 @@ class MnemonicReader:
             self.loss = loss + lossL2
 
         with tf.variable_scope('optimizer') as scope:
-            optimizer = tf.keras.optimizers.Adamax()
-            trainable = [x for x in tf.trainable_variables() if 'Adamax' not in x.name]
-            self.optimize = optimizer.get_updates(self.loss, trainable)
+            optimizer = tf.train.AdamOptimizer(learning_rate=self.lr)
+            grads = tf.gradients(self.loss, tf.trainable_variables())
+            grads, _ = tf.clip_by_global_norm(grads, self.config.grad_clip)
+            grads_and_vars = zip(grads, tf.trainable_variables())
+            self.optimize = optimizer.apply_gradients(grads_and_vars, global_step=self.global_step)
 
     def forward(self):
         self.c_char_embed, self.q_char_embed = self.char_embedding()
