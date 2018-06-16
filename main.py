@@ -81,7 +81,7 @@ class Main:
                         best_f1 = f1
                     else:
                         sess.run(self.model.decay_lr)
-                        print('best f1: %.2f - current f1: %.2f - new lr: %.2f' % (best_f1, f1, sess.run(self.model.lr)))
+                        print('best f1: %.2f - current f1: %.2f - new lr: %f' % (best_f1, f1, sess.run(self.model.lr)))
 
     def test(self, sess):
         total = em = f1 = 0

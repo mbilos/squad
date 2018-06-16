@@ -2,6 +2,52 @@ import tensorflow as tf
 import numpy as np
 import util
 
+from tensorflow.python.ops import control_flow_ops
+from tensorflow.python.ops import math_ops
+from tensorflow.python.ops import state_ops
+from tensorflow.python.framework import ops
+from tensorflow.python.training import optimizer
+
+class AdamaxOptimizer(optimizer.Optimizer):
+    # from https://github.com/openai/iaf/blob/master/tf_utils/adamax.py
+    def __init__(self, learning_rate=2e-3, beta1=0.9, beta2=0.999, use_locking=False, name="Adamax"):
+        super(AdamaxOptimizer, self).__init__(use_locking, name)
+        self._lr = learning_rate
+        self._beta1 = beta1
+        self._beta2 = beta2
+
+        self._lr_t = None
+        self._beta1_t = None
+        self._beta2_t = None
+
+    def _prepare(self):
+        self._lr_t = ops.convert_to_tensor(self._lr, name="learning_rate")
+        self._beta1_t = ops.convert_to_tensor(self._beta1, name="beta1")
+        self._beta2_t = ops.convert_to_tensor(self._beta2, name="beta2")
+
+    def _create_slots(self, var_list):
+        for v in var_list:
+            self._zeros_slot(v, "m", self._name)
+            self._zeros_slot(v, "v", self._name)
+
+    def _apply_dense(self, grad, var):
+        lr_t = math_ops.cast(self._lr_t, var.dtype.base_dtype)
+        beta1_t = math_ops.cast(self._beta1_t, var.dtype.base_dtype)
+        beta2_t = math_ops.cast(self._beta2_t, var.dtype.base_dtype)
+        eps = 1e-8
+
+        v = self.get_slot(var, "v")
+        v_t = v.assign(beta1_t * v + (1. - beta1_t) * grad)
+        m = self.get_slot(var, "m")
+        m_t = m.assign(tf.maximum(beta2_t * m + eps, tf.abs(grad)))
+        g_t = v_t / m_t
+
+        var_update = state_ops.assign_sub(var, lr_t * g_t)
+        return control_flow_ops.group(*[var_update, m_t, v_t])
+
+    def _apply_sparse(self, grad, var):
+        raise NotImplementedError("Sparse gradient updates are not supported.")
+
 class MnemonicReader:
     def __init__(self, config):
         self.config = config
@@ -44,14 +90,13 @@ class MnemonicReader:
             self.loss = loss + lossL2
 
         with tf.variable_scope('optimizer') as scope:
-            optimizer = tf.train.AdamOptimizer(learning_rate=self.lr)
+            optimizer = tf.train.AdamOptimizer()
             grads = tf.gradients(self.loss, tf.trainable_variables())
             grads, _ = tf.clip_by_global_norm(grads, self.config.grad_clip)
             grads_and_vars = zip(grads, tf.trainable_variables())
             self.optimize = optimizer.apply_gradients(grads_and_vars, global_step=self.global_step)
 
     def forward(self):
-        self.c_char_embed, self.q_char_embed = self.char_embedding()
         self.c_encoded, self.q_encoded = self.input_encoder()
         self.modeling = self.iterative_aligner()
         self.start_linear, self.end_linear, self.pred_start, self.pred_end = self.answer_pointer()
@@ -139,52 +184,16 @@ class MnemonicReader:
 
     def input_encoder(self):
         with tf.variable_scope('input-embedding'):
-            similarity = tf.matmul(tf.nn.l2_normalize(self.c_words, -1), tf.nn.l2_normalize(self.q_words, -1), transpose_b=True)
-            c_similarity = tf.reduce_max(similarity, -1, keep_dims=True)
-            q_similarity = tf.transpose(tf.reduce_max(similarity, 1, keep_dims=True), [0,2,1])
+            c = self.c_words
+            q = self.q_words
 
-            c = tf.concat([self.c_words, self.c_char_embed, c_similarity], -1)
-            q = tf.concat([self.q_words, self.q_char_embed, q_similarity], -1)
-
-            self.config.embed_size += 1
-
-            if self.config.pos_embed > 0:
-                self.pos_emb_matrix = tf.get_variable('pos_emb', [self.config.unique_pos, self.config.pos_embed])
-                c_pos_embed = tf.nn.embedding_lookup(self.pos_emb_matrix, self.c_pos)
-                q_pos_embed = tf.nn.embedding_lookup(self.pos_emb_matrix, self.q_pos)
-                c = tf.concat([c, tf.layers.dropout(c_pos_embed, rate=self.config.dropout*0.5, training=self.config.training)], -1)
-                q = tf.concat([q, tf.layers.dropout(q_pos_embed, rate=self.config.dropout*0.5, training=self.config.training)], -1)
-
-            if self.config.ner_embed > 0:
-                self.ner_emb_matrix = tf.get_variable('ner_emb', [self.config.unique_ner, self.config.ner_embed])
-                c_ner_embed = tf.nn.embedding_lookup(self.ner_emb_matrix, self.c_ner)
-                q_ner_embed = tf.nn.embedding_lookup(self.ner_emb_matrix, self.q_ner)
-                c = tf.concat([c, tf.layers.dropout(c_ner_embed, rate=self.config.dropout*0.5, training=self.config.training)], -1)
-                q = tf.concat([q, tf.layers.dropout(q_ner_embed, rate=self.config.dropout*0.5, training=self.config.training)], -1)
+            self.config.embed_size = self.config.word_embed
 
         with tf.variable_scope('contextual-embedding') as scope:
             c_output, _ = self.rnn(c, self.c_len)
             q_output, _ = self.rnn(q, self.q_len, reuse=True)
 
         return c_output, q_output
-
-    def char_embedding(self):
-        with tf.variable_scope('char-embedding'):
-            self.char_emb_matrix = tf.get_variable('char_emb', [self.config.unique_chars, self.config.char_embed])
-
-            c = tf.nn.embedding_lookup(self.char_emb_matrix, self.c_chars)
-            q = tf.nn.embedding_lookup(self.char_emb_matrix, self.q_chars)
-
-            c = tf.layers.dropout(c, rate=self.config.dropout, training=self.config.training)
-            q = tf.layers.dropout(q, rate=self.config.dropout, training=self.config.training)
-
-            c = tf.layers.conv2d(c, self.config.char_embed, kernel_size=[1, 5], activation=tf.nn.relu)
-            q = tf.layers.conv2d(q, self.config.char_embed, kernel_size=[1, 5], activation=tf.nn.relu, reuse=True)
-
-            c = tf.reduce_max(c, axis=2)
-            q = tf.reduce_max(q, axis=2)
-
-            return c, q
 
     def rnn(self, inputs, sequence_length, reuse=None):
         return util.bidirectional_dynamic_rnn(
