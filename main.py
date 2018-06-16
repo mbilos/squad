@@ -63,7 +63,7 @@ class Main:
 
             t = tqdm(range(step, self.config.iterations))
             for i in t:
-                c, ch, q, qh, ct, ce, qt, qe, s, e = self.batch('train')
+                c, ch, q, qh, ct, ce, qt, qe, s, e = self.get_batch('train')
                 feed = { self.model.c_words: c, self.model.c_chars: ch, self.model.c_pos: ct, self.model.c_ner: ce,
                          self.model.q_words: q, self.model.q_chars: qh, self.model.q_pos: qt, self.model.q_ner: qe,
                          self.model.start: s, self.model.end: e }
@@ -84,9 +84,9 @@ class Main:
                         print('best f1: %.2f - current f1: %.2f - new lr: %.2f' % (best_f1, f1, sess.run(self.model.lr)))
 
     def test(self, sess):
-        em = f1 = total = 0
+        em = f1 = 0
         for i in range(0, len(self.devset), 50):
-            tokens, c, ch, q, qh, ct, ce, qt, qe, answers = self.batch('test', i, i + 50)
+            tokens, c, ch, q, qh, ct, ce, qt, qe, answers = self.get_batch('test', i, i + 50)
             feed = { self.model.c_words: c, self.model.c_chars: ch, self.model.c_pos: ct, self.model.c_ner: ce,
                     self.model.q_words: q, self.model.q_chars: qh, self.model.q_pos: qt, self.model.q_ner: qe }
 
@@ -98,9 +98,8 @@ class Main:
             e, f = evaluate._evaluate(answers, answer_cand)
             em += e
             f1 += f
-            total += len(tokens)
 
-        return em / total, f1 / total
+        return em / len(self.devset), f1 / len(self.devset)
 
     def get_best_spans(self, start, end):
         def get_best_span(first, second):
@@ -127,7 +126,7 @@ class Main:
             ends.append(e)
         return np.array(starts), np.array(ends)
 
-    def batch(self, mode='train', start=None, end=None):
+    def get_batch(self, mode='train', start=None, end=None):
         PAD = '='
         UNK = '_'
 
