@@ -78,7 +78,7 @@ class Main:
                     print('\nIteration: %d - Exact match: %.2f\tf1: %.2f\tlr: %f' % (i, em, f1, sess.run(self.model.lr)))
 
                     if i % 5000 == 0 and self.config.ema_decay > 0:
-                        sess.run(model.assign_vars)
+                        sess.run(self.model.assign_vars)
                         ema, ema_f1 = test(sess)
                         print('\nIteration EMA: %d - Exact match: %.2f\tf1: %.2f' % (i, ema, ema_f1))
 
