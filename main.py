@@ -75,7 +75,12 @@ class Main:
                     saver.save(sess, os.path.join('models', self.config.name, 'model'), global_step=i)
 
                     em, f1 = self.test(sess)
-                    print('\nIteration: %d - Exact match: %.2f\tf1: %.2f' % (i, em, f1))
+                    print('\nIteration: %d - Exact match: %.2f\tf1: %.2f\tlr: %f' % (i, em, f1, sess.run(self.model.lr)))
+
+                    if i % 5000 == 0 and self.config.ema_decay > 0:
+                        sess.run(model.assign_vars)
+                        ema, ema_f1 = test(sess)
+                        print('\nIteration EMA: %d - Exact match: %.2f\tf1: %.2f' % (i, ema, ema_f1))
 
                     if f1 > best_f1:
                         best_f1 = f1
