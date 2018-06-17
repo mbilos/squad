@@ -7,7 +7,8 @@ class QANet:
         self.config = config
 
         self.global_step = tf.get_variable('global_step', shape=[], dtype=tf.int32, initializer=tf.constant_initializer(0), trainable=False)
-        self.lr = tf.minimum(self.config.learning_rate, self.config.learning_rate / tf.log(999.) * tf.log(tf.cast(self.global_step, tf.float32) + 1))
+        self.lr = tf.get_variable('learning-rate', shape=[], dtype=tf.float32, initializer=tf.constant_initializer(self.config.learning_rate))
+        self.decay_lr = tf.assign(self.lr, tf.maximum(self.lr / 2, 1e-6))
 
         self.input()
         self.forward()
