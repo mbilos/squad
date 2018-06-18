@@ -65,10 +65,21 @@ class QANet:
         self.modeling = self.model_encoder()
         self.start_linear, self.end_linear, self.pred_start, self.pred_end = self.output()
 
-    def encoder(self, inputs, num_blocks, num_convolutions, kernel, mask=None, scope='encoder', reuse=None):
+    def encoder(self, inputs, num_blocks, num_convolutions, kernel, length=None, scope='encoder', reuse=None):
         def layer_dropout(prev, residual, dropout):
             pred = tf.random_uniform([], 0.0, 1.0) < dropout
             return tf.cond(pred, lambda: prev, lambda: prev + residual)
+
+        def self_att(x, i, scope='self-attention', reuse=None):
+            with tf.variable_scope(scope, reuse=reuse) as scope:
+                att = util.layer_norm(x, reuse=reuse)
+                att = util.trilinear(x, x) - 1e30 * tf.eye(length)
+                att = tf.nn.softmax(att)
+
+                res = tf.matmul(att, x)
+                res = tf.layers.dense(res, self.config.filters, activation=tf.nn.relu)
+
+                return layer_dropout(x, res, (i + 1) / num_blocks * self.config.dropout)
 
         def residual_block(x, j):
             with tf.variable_scope('residual-block-%d' %j):
@@ -103,19 +114,7 @@ class QANet:
                         conv.append(res)
 
                     with tf.variable_scope('self-attention'):
-                        ln = util.layer_norm(conv[-1], reuse=reuse)
-                        ln = tf.layers.dropout(ln, rate=self.config.dropout, training=self.config.training)
-
-                        self_attention = util._multihead_attention(ln,
-                            self.config.filters,
-                            num_heads=self.config.num_heads,
-                            reuse=reuse,
-                            mask=mask,
-                            is_training=self.config.training,
-                            bias=False,
-                            dropout=self.config.dropout)
-
-                        self_attention = layer_dropout(conv[-1], self_attention, (i + 1) / num_blocks * self.config.dropout)
+                        self_attention = self_att(conv[-1], i)
 
                     with tf.variable_scope('feedforward'):
                         ln = util.layer_norm(self_attention, reuse=reuse)
@@ -154,7 +153,7 @@ class QANet:
                     num_blocks=self.config.model_num_blocks,
                     num_convolutions=self.config.model_num_convs,
                     kernel=self.config.model_kernel,
-                    mask=self.c_mask,
+                    length=self.config.context_len,
                     reuse=reuse)
                 modeling.append(m)
 
@@ -184,8 +183,8 @@ class QANet:
         with tf.variable_scope('input-encoder'):
             c, q = self.input_embedding()
 
-            c = self.encoder(c, self.config.encoder_num_blocks, self.config.encoder_num_convs, self.config.encoder_kernel, mask=self.c_mask)
-            q = self.encoder(q, self.config.encoder_num_blocks, self.config.encoder_num_convs, self.config.encoder_kernel, mask=self.q_mask, reuse=True)
+            c = self.encoder(c, self.config.encoder_num_blocks, self.config.encoder_num_convs, self.config.encoder_kernel, length=self.config.context_len)
+            q = self.encoder(q, self.config.encoder_num_blocks, self.config.encoder_num_convs, self.config.encoder_kernel, length=self.config.question_len, reuse=True)
 
             return c, q
 
