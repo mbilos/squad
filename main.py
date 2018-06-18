@@ -54,8 +54,16 @@ class Main:
                 if self.config.mode == 'train':
                     self.train(sess, saver)
                 else:
-                    print('aosif')
-                    self.test(sess)
+                    step = sess.run(self.model.global_step)
+                    print('Evaluating at step %d' % step)
+
+                    em, f1 = self.test(sess)
+                    print('\nIteration: %d - Exact match: %.2f\tf1: %.2f\t' % (i, em, f1))
+
+                    if self.config.ema_decay > 0:
+                        sess.run(self.model.assign_vars)
+                        ema, ema_f1 = self.test(sess)
+                        print('\nIteration EMA: %d - Exact match: %.2f\tf1: %.2f' % (i, ema, ema_f1))
 
     def train(self, sess, saver):
         best_f1 = 0
