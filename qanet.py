@@ -72,11 +72,11 @@ class QANet:
 
         def self_att(x, i, scope='self-attention', reuse=None):
             with tf.variable_scope(scope, reuse=reuse) as scope:
-                att = util.layer_norm(x, reuse=reuse)
-                att = util.trilinear(x, x) - 1e30 * tf.eye(length)
+                inputs = util.layer_norm(x, reuse=reuse)
+                att = util.trilinear(inputs, inputs) - 1e30 * tf.eye(length)
                 att = tf.nn.softmax(att)
 
-                res = tf.matmul(att, x)
+                res = tf.matmul(att, inputs)
                 res = tf.layers.dense(res, self.config.filters, activation=tf.nn.relu)
 
                 return layer_dropout(x, res, (i + 1) / num_blocks * self.config.dropout)
