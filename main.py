@@ -43,50 +43,51 @@ class Main:
             else:
                 raise NotImplementedError('Invalid arhitecture name')
 
-            if self.config.mode == 'train':
-                self.train()
-            else:
-                self.test()
+            with tf.Session() as sess:
+                sess.run(tf.global_variables_initializer())
+                saver = tf.train.Saver(max_to_keep=20)
+                save_path = os.path.join('models', self.config.name)
 
-    def train(self):
-        with tf.Session() as sess:
-            sess.run(tf.global_variables_initializer())
-            saver = tf.train.Saver(max_to_keep=20)
+                if os.path.exists(save_path):
+                    saver.restore(sess, tf.train.latest_checkpoint(save_path))
 
-            save_path = os.path.join('models', self.config.name)
-            if os.path.exists(save_path):
-                saver.restore(sess, tf.train.latest_checkpoint(save_path))
+                if self.config.mode == 'train':
+                    self.train(sess, saver)
+                else:
+                    print('aosif')
+                    self.test(sess)
 
-            best_f1 = 0
-            loss = 0
-            step = sess.run(self.model.global_step)
+    def train(self, sess, saver):
+        best_f1 = 0
+        loss = 0
+        step = sess.run(self.model.global_step)
 
-            t = tqdm(range(step, self.config.iterations))
-            for i in t:
-                c, ch, q, qh, ct, ce, qt, qe, s, e = self.get_batch('train')
-                feed = { self.model.c_words: c, self.model.c_chars: ch, self.model.c_pos: ct, self.model.c_ner: ce,
-                         self.model.q_words: q, self.model.q_chars: qh, self.model.q_pos: qt, self.model.q_ner: qe,
-                         self.model.start: s, self.model.end: e }
+        t = tqdm(range(step, self.config.iterations))
+        for i in t:
+            c, ch, q, qh, ct, ce, qt, qe, s, e = self.get_batch('train')
+            feed = { self.model.c_words: c, self.model.c_chars: ch, self.model.c_pos: ct, self.model.c_ner: ce,
+                        self.model.q_words: q, self.model.q_chars: qh, self.model.q_pos: qt, self.model.q_ner: qe,
+                        self.model.start: s, self.model.end: e }
 
-                _, loss = sess.run([self.model.optimize, self.model.loss], feed)
-                t.set_description('loss: %.2f' % loss)
+            _, loss = sess.run([self.model.optimize, self.model.loss], feed)
+            t.set_description('loss: %.2f' % loss)
 
-                if i > 0 and i % self.config.save_every == 0:
-                    saver.save(sess, os.path.join('models', self.config.name, 'model'), global_step=i)
+            if i > 0 and i % self.config.save_every == 0:
+                saver.save(sess, os.path.join('models', self.config.name, 'model'), global_step=i)
 
-                    em, f1 = self.test(sess)
-                    print('\nIteration: %d - Exact match: %.2f\tf1: %.2f\tlr: %f' % (i, em, f1, sess.run(self.model.lr)))
+                em, f1 = self.test(sess)
+                print('\nIteration: %d - Exact match: %.2f\tf1: %.2f\tlr: %f' % (i, em, f1, sess.run(self.model.lr)))
 
-                    if i % 5000 == 0 and self.config.ema_decay > 0:
-                        sess.run(self.model.assign_vars)
-                        ema, ema_f1 = test(sess)
-                        print('\nIteration EMA: %d - Exact match: %.2f\tf1: %.2f' % (i, ema, ema_f1))
+                if i % 5000 == 0 and self.config.ema_decay > 0:
+                    sess.run(self.model.assign_vars)
+                    ema, ema_f1 = self.test(sess)
+                    print('\nIteration EMA: %d - Exact match: %.2f\tf1: %.2f' % (i, ema, ema_f1))
 
-                    if f1 > best_f1:
-                        best_f1 = f1
-                    else:
-                        sess.run(self.model.decay_lr)
-                        print('best f1: %.2f - current f1: %.2f - new lr: %f' % (best_f1, f1, sess.run(self.model.lr)))
+                if f1 > best_f1:
+                    best_f1 = f1
+                else:
+                    sess.run(self.model.decay_lr)
+                    print('best f1: %.2f - current f1: %.2f - new lr: %f' % (best_f1, f1, sess.run(self.model.lr)))
 
     def test(self, sess):
         total = em = f1 = 0
