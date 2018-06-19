@@ -90,11 +90,9 @@ class MnemonicReader:
             self.loss = loss + lossL2
 
         with tf.variable_scope('optimizer') as scope:
-            optimizer = tf.train.AdamOptimizer()
-            grads = tf.gradients(self.loss, tf.trainable_variables())
-            grads, _ = tf.clip_by_global_norm(grads, self.config.grad_clip)
-            grads_and_vars = zip(grads, tf.trainable_variables())
-            self.optimize = optimizer.apply_gradients(grads_and_vars, global_step=self.global_step)
+            params = tf.trainable_variables()
+            optimizer = tf.contrib.keras.optimizers.Adamax()
+            self.optimize = optimizer.get_updates(loss=self.loss, params=params)
 
     def forward(self):
         self.c_encoded, self.q_encoded = self.input_encoder()
