@@ -215,6 +215,7 @@ class Main:
         parser.add_argument('--l2',             default = 3e-7,     type=float)
         parser.add_argument('--grad_clip',      default = 5.0,      type=float)
         parser.add_argument('--ema_decay',      default = 0.9999,   type=float)
+        parser.add_argument('--cell_type',      default = 'gru',    type=str)
 
         # qanet specific
         parser.add_argument('--encoder_num_blocks', default = 1, type=int)

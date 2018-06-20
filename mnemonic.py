@@ -198,6 +198,6 @@ class MnemonicReader:
             inputs,
             sequence_length,
             self.config.cell_size,
+            cell_type=self.config.cell_type,
             dropout=self.config.dropout,
-            concat=True,
             reuse=reuse)

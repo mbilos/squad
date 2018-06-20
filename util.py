@@ -3,6 +3,7 @@ import tensorflow as tf
 import math
 
 from tensorflow.python.ops.rnn_cell import BasicLSTMCell, GRUCell
+from tensorflow.contrib.cudnn_rnn import CudnnLSTM
 
 def get_shape(x):
     static = x.get_shape().as_list()
@@ -10,7 +11,12 @@ def get_shape(x):
     return [static[i] or shape[i] for i in range(len(static))]
 
 
-def bidirectional_dynamic_rnn(inputs, sequence_length, hidden_size, dropout=0.0, cell_type='gru', concat=False, scope='bi-rnn', reuse=None):
+def bidirectional_dynamic_rnn(inputs, sequence_length, hidden_size, dropout=0.0, cell_type='gru', scope='bi-rnn', reuse=None):
+
+    if cell_type == 'cudnn':
+        cell = CudnnLSTM(1, hidden_size, direction='bidirectional', dropout=1.0 - dropout)
+        outputs, states = cell(inputs)
+        return outputs, states
 
     if cell_type == 'gru':
         cell = GRUCell(hidden_size)
@@ -27,8 +33,7 @@ def bidirectional_dynamic_rnn(inputs, sequence_length, hidden_size, dropout=0.0,
             dtype=tf.float32,
             sequence_length=sequence_length)
 
-        if concat:
-            outputs = tf.concat(outputs, -1)
+        outputs = tf.concat(outputs, -1)
 
         return outputs, state
 
