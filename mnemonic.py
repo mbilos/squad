@@ -90,9 +90,11 @@ class MnemonicReader:
             self.loss = loss + lossL2
 
         with tf.variable_scope('optimizer') as scope:
-            params = tf.trainable_variables()
-            optimizer = tf.contrib.keras.optimizers.Adamax()
-            self.optimize = optimizer.get_updates(loss=self.loss, params=params)
+            optimizer = AdamaxOptimizer(learning_rate=self.lr)
+            grads = tf.gradients(self.loss, tf.trainable_variables())
+            grads, _ = tf.clip_by_global_norm(grads, self.config.grad_clip)
+            grads_and_vars = zip(grads, tf.trainable_variables())
+            self.optimize = optimizer.apply_gradients(grads_and_vars, global_step=self.global_step)
 
     def forward(self):
         self.c_encoded, self.q_encoded = self.input_encoder()
@@ -102,32 +104,34 @@ class MnemonicReader:
     def answer_pointer(self):
         def pointer(c, z, scope):
             with tf.variable_scope(scope):
-                z = tf.tile(tf.expand_dims(z, 1), [1, self.config.context_len, 1])
-                s = tf.concat([c, z, c * z], -1)
+                z = tf.tile(tf.expand_dims(z, 1), [1, self.config.context_len, 1]) # [batch, context_len, cell_size * 2]
+                s = tf.concat([c, z, c * z], -1) # [batch, context_len, cell_size * 6]
                 with tf.variable_scope('relu'):
-                    s = tf.layers.dense(s, self.config.cell_size * 6, activation=tf.nn.relu)
+                    s = tf.layers.dense(s, self.config.cell_size * 2, activation=tf.nn.relu) # [batch, context_len, cell_size * 2]
                     s = tf.layers.dropout(s, rate=self.config.dropout, training=self.config.training)
                 with tf.variable_scope('linear'):
-                    s = tf.squeeze(tf.layers.dense(s, 1, use_bias=False), -1)
-                    p = tf.nn.softmax(s - 1e30 * (1 - self.c_mask))
+                    s = tf.squeeze(tf.layers.dense(s, 1, use_bias=False), -1) # [batch, context_len]
+                    p = tf.nn.softmax(s - 1e30 * (1 - self.c_mask)) # [batch, context_len]
                 return s, p
 
         def memory(c, p, z, scope):
+            # c [batch, context_len, cell_size * 2] p [batch, context_len]
             with tf.variable_scope(scope):
-                u = tf.squeeze(tf.matmul(c, tf.expand_dims(p, -1), transpose_a=True), -1)
+                u = tf.squeeze(tf.matmul(c, tf.expand_dims(p, -1), transpose_a=True), -1) # [batch, cell_size * 2]
                 return self.SFU(z, [u])
 
         def hop(c, z_s, start_memory=True):
+            # c [batch, context_len, cell_size * 2] z_s [batch, cell_size * 2]
             start, p_start = pointer(c, z_s, 'start-pointer')
 
-            z_e = memory(c, p_start, z_s, 'end-memory')
+            z_e = memory(c, p_start, z_s, 'end-memory') # [batch, cell_size * 2]
             end, p_end = pointer(c, z_e, 'end-pointer')
 
             z_s = memory(c, p_end, z_e, 'start-memory') if start_memory else None
 
             return start, p_start, z_s, end, p_end, z_e
 
-        start_memory = [self.q_encoded[:,-1,:]]
+        start_memory = [self.q_encoded[:,-1,:]] # [batch, cell_size]
 
         for i in range(self.config.pointer_hops):
             with tf.variable_scope('pointer-hop-%d' % i):
@@ -153,10 +157,10 @@ class MnemonicReader:
     def self_aligning(self, c,  scope='self-aligner', reuse=None):
         with tf.variable_scope(scope, reuse=reuse):
             shape = util.get_shape(c)
-            proj = tf.layers.dense(c, shape[-1], activation=tf.nn.relu)
 
-            similarity = tf.matmul(proj, proj, transpose_b=True) - 1e30 * tf.eye(self.config.context_len)
-            similarity -= 1e30 * (1 - tf.expand_dims(self.c_mask, 1))
+            similarity = tf.matmul(c, c, transpose_b=True) - 1e29 * tf.eye(self.config.context_len)
+            similarity -= 1e29 * (1 - tf.expand_dims(self.c_mask, 1))
+
             row_norm = tf.nn.softmax(similarity, -1)
             _c = tf.matmul(row_norm, c)
 
@@ -164,10 +168,17 @@ class MnemonicReader:
 
     def interactive_aligning(self, c, q, scope='interactive-aligner', reuse=None):
         with tf.variable_scope(scope, reuse=reuse):
-            similarity = tf.matmul(c, q, transpose_b=True)
+            shape = util.get_shape(c)
+
+            c_proj = tf.layers.dense(c, shape[-1], activation=tf.nn.relu)
+            q_proj = tf.layers.dense(q, shape[-1], activation=tf.nn.relu)
+
+            similarity = tf.matmul(c_proj, q_proj, transpose_b=True)
             similarity -= 1e30 * (1 - tf.expand_dims(self.q_mask, 1))
+
             row_norm = tf.nn.softmax(similarity, -1)
             _q = tf.matmul(row_norm, q)
+
             return self.SFU(c, [_q, c * _q, c - _q])
 
     def SFU(self, inputs, fusion, scope='sfu', reuse=None):
