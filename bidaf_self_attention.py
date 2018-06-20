@@ -173,6 +173,5 @@ class BiDAF_SelfAttention:
             inputs,
             sequence_length,
             self.config.cell_size,
-            cell_type=self.config.cell_type,
             dropout=self.config.dropout,
             reuse=reuse)

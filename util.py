@@ -2,33 +2,17 @@ import numpy as np
 import tensorflow as tf
 import math
 
-from tensorflow.python.ops.rnn_cell import BasicLSTMCell, GRUCell
-from tensorflow.contrib.cudnn_rnn import CudnnLSTM
-
 def get_shape(x):
     static = x.get_shape().as_list()
     shape = tf.shape(x)
     return [static[i] or shape[i] for i in range(len(static))]
 
 
-def bidirectional_dynamic_rnn(inputs, sequence_length, hidden_size, dropout=0.0, cell_type='gru', scope='bi-rnn', reuse=None):
-
-    if cell_type == 'cudnn':
-        cell = CudnnLSTM(1, hidden_size, direction='bidirectional', dropout=1.0 - dropout)
-        outputs, states = cell(inputs)
-        return outputs, states
-
-    if cell_type == 'gru':
-        cell = GRUCell(hidden_size)
-    elif cell_type == 'lstm':
-        cell = BasicLSTMCell(hidden_size)
-    else:
-        raise NotImplementedError('Invalid cell name')
-
+def bidirectional_dynamic_rnn(inputs, sequence_length, hidden_size, dropout=0.0, scope='bi-rnn', reuse=None):
     with tf.variable_scope(scope, reuse=reuse):
         outputs, state = tf.nn.bidirectional_dynamic_rnn(
-            tf.nn.rnn_cell.DropoutWrapper(cell, input_keep_prob=1.0 - dropout), # forward
-            tf.nn.rnn_cell.DropoutWrapper(cell, input_keep_prob=1.0 - dropout), # backward
+            tf.nn.rnn_cell.DropoutWrapper(tf.contrib.rnn.GRUCell(hidden_size), input_keep_prob=1.0 - dropout), # forward
+            tf.nn.rnn_cell.DropoutWrapper(tf.contrib.rnn.GRUCell(hidden_size), input_keep_prob=1.0 - dropout), # backward
             inputs,
             dtype=tf.float32,
             sequence_length=sequence_length)

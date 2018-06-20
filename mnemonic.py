@@ -102,41 +102,44 @@ class MnemonicReader:
         self.start_linear, self.end_linear, self.pred_start, self.pred_end = self.answer_pointer()
 
     def answer_pointer(self):
-        def pointer(c, z, scope):
-            with tf.variable_scope(scope):
+        def pointer(c, z, scope, reuse=None):
+            with tf.variable_scope(scope, reuse=reuse):
                 z = tf.tile(tf.expand_dims(z, 1), [1, self.config.context_len, 1]) # [batch, context_len, cell_size * 2]
                 s = tf.concat([c, z, c * z], -1) # [batch, context_len, cell_size * 6]
                 with tf.variable_scope('relu'):
-                    s = tf.layers.dense(s, self.config.cell_size * 2, activation=tf.nn.relu) # [batch, context_len, cell_size * 2]
+                    s = tf.layers.dense(s, self.config.cell_size, activation=tf.nn.relu, reuse=reuse) # [batch, context_len, cell_size * 2]
                     s = tf.layers.dropout(s, rate=self.config.dropout, training=self.config.training)
                 with tf.variable_scope('linear'):
-                    s = tf.squeeze(tf.layers.dense(s, 1, use_bias=False), -1) # [batch, context_len]
+                    s = tf.squeeze(tf.layers.dense(s, 1, use_bias=False, reuse=reuse), -1) # [batch, context_len]
                     p = tf.nn.softmax(s - 1e30 * (1 - self.c_mask)) # [batch, context_len]
                 return s, p
 
-        def memory(c, p, z, scope):
+        def memory(c, p, z, scope, reuse=None):
             # c [batch, context_len, cell_size * 2] p [batch, context_len]
-            with tf.variable_scope(scope):
+            with tf.variable_scope(scope, reuse=reuse):
                 u = tf.squeeze(tf.matmul(c, tf.expand_dims(p, -1), transpose_a=True), -1) # [batch, cell_size * 2]
-                return self.SFU(z, [u])
+                return self.SFU(z, [u], reuse=reuse)
 
-        def hop(c, z_s, start_memory=True):
+        def hop(c, z_s, start_memory=True, reuse=None):
             # c [batch, context_len, cell_size * 2] z_s [batch, cell_size * 2]
-            start, p_start = pointer(c, z_s, 'start-pointer')
+            start, p_start = pointer(c, z_s, 'start-pointer', reuse)
 
-            z_e = memory(c, p_start, z_s, 'end-memory') # [batch, cell_size * 2]
-            end, p_end = pointer(c, z_e, 'end-pointer')
+            z_e = memory(c, p_start, z_s, 'end-memory', reuse) # [batch, cell_size * 2]
+            end, p_end = pointer(c, z_e, 'end-pointer', reuse)
 
-            z_s = memory(c, p_end, z_e, 'start-memory') if start_memory else None
+            z_s = memory(c, p_end, z_e, 'start-memory', reuse) if start_memory else None
 
             return start, p_start, z_s, end, p_end, z_e
 
         start_memory = [self.q_encoded[:,-1,:]] # [batch, cell_size]
 
         for i in range(self.config.pointer_hops):
-            with tf.variable_scope('pointer-hop-%d' % i):
+            reuse = i > 0
+
+            with tf.variable_scope('pointer-hop', reuse=reuse):
                 calc_start = i + 1 < self.config.pointer_hops
-                start, p_start, z_s, end, p_end, z_e = hop(self.modeling[-1], start_memory[-1], calc_start)
+
+                start, p_start, z_s, end, p_end, z_e = hop(self.modeling[-1], start_memory[-1], calc_start, reuse=reuse)
                 start_memory.append(z_s)
 
         return start, end, p_start, p_end
@@ -170,10 +173,7 @@ class MnemonicReader:
         with tf.variable_scope(scope, reuse=reuse):
             shape = util.get_shape(c)
 
-            c_proj = tf.layers.dense(c, shape[-1], activation=tf.nn.relu)
-            q_proj = tf.layers.dense(q, shape[-1], activation=tf.nn.relu)
-
-            similarity = tf.matmul(c_proj, q_proj, transpose_b=True)
+            similarity = tf.matmul(c, q, transpose_b=True)
             similarity -= 1e30 * (1 - tf.expand_dims(self.q_mask, 1))
 
             row_norm = tf.nn.softmax(similarity, -1)
@@ -209,6 +209,5 @@ class MnemonicReader:
             inputs,
             sequence_length,
             self.config.cell_size,
-            cell_type=self.config.cell_type,
             dropout=self.config.dropout,
             reuse=reuse)

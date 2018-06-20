@@ -181,5 +181,4 @@ class BiDAF:
             sequence_length,
             self.config.cell_size,
             dropout=self.config.dropout,
-            cell_type=self.config.cell_type,
             reuse=reuse)
