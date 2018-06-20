@@ -77,8 +77,7 @@ class BiDAF:
 
         with tf.variable_scope('end-index') as scope:
             end_input = tf.concat([tf.expand_dims(start_linear, -1), self.attention, self.modeling[-1]], -1)
-            memory, _ = util.bidirectional_dynamic_rnn(end_input, self.c_len, self.config.cell_size,
-                dropout=self.config.dropout, concat=True)
+            memory, _ = self.rnn(end_input, self.c_len)
 
             end_linear = tf.squeeze(tf.layers.dense(memory, 1), -1)
             pred_end = tf.nn.softmax(end_linear)
@@ -87,9 +86,9 @@ class BiDAF:
 
     def model_encoder(self):
         with tf.variable_scope('first-memory') as scope:
-            memory1, _ = util.bidirectional_dynamic_rnn(self.attention, self.c_len, self.config.cell_size, concat=True)
+            memory1, _ = self.rnn(self.attention, self.c_len)
         with tf.variable_scope('second-memory') as scope:
-            memory2, _ = util.bidirectional_dynamic_rnn(memory1, self.c_len, self.config.cell_size, concat=True)
+            memory2, _ = self.rnn(memory1, self.c_len)
 
         return [memory1, memory2]
 
@@ -154,8 +153,8 @@ class BiDAF:
                 q_h2 = util.gated_connection(q_h1, q_h2, reuse=True)
 
         with tf.variable_scope('contextual-embedding') as scope:
-            c_output, _ = util.bidirectional_dynamic_rnn(c_h2, self.c_len, self.config.cell_size, concat=True)
-            q_output, _ = util.bidirectional_dynamic_rnn(q_h2, self.q_len, self.config.cell_size, concat=True, reuse=True)
+            c_output, _ = self.rnn(c_h2, self.c_len)
+            q_output, _ = self.rnn(q_h2, self.q_len, reuse=True)
 
         return c_output, q_output
 
@@ -176,3 +175,12 @@ class BiDAF:
             q = tf.reduce_max(q, axis=2)
 
             return c, q
+
+    def rnn(self, inputs, sequence_length, reuse=None):
+        return util.bidirectional_dynamic_rnn(inputs,
+            sequence_length,
+            self.config.cell_size,
+            dropout=self.config.dropout,
+            cell_type='lstm',
+            concat=True,
+            reuse=reuse)
