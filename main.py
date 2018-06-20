@@ -1,48 +1,24 @@
 import os
 import argparse
-
-import tensorflow as tf
 import numpy as np
+import tensorflow as tf
 from tqdm import tqdm
 
 import read
 import evaluate
-from qanet import QANet
-from qanet_simple import QANetSimple
-from bidaf import BiDAF
-from bidaf_self_attention import BiDAF_SelfAttention
-from bidaf_conv_input import BiDAF_ConvInput
-from mnemonic import MnemonicReader
 
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+from bidaf import BiDAF
 
 class Main:
     def __init__(self):
         self.config = self.get_args()
-
-        self.trainset, self.devset, self.embed, self.char2index, \
-            self.index2char, self.tag2index, self.index2tag, \
-            self.entity2index, self.index2entity = read.data(self.config.word_embed)
+        self.trainset, self.devset, self.config.embed, self.word2index, self.char2index = read.data()
 
         self.config.unique_chars = len(self.char2index)
-        self.config.unique_pos = len(self.tag2index)
-        self.config.unique_ner = len(self.entity2index)
-        self.config.embed_size = self.config.word_embed + self.config.char_embed + \
-            self.config.pos_embed + self.config.ner_embed
 
         with tf.Graph().as_default() as g:
-            if self.config.name == 'qanet':
-                self.model = QANet(self.config)
-            if self.config.name == 'qanet-simple':
-                self.model = QANetSimple(self.config)
-            elif self.config.name == 'bidaf':
+            if self.config.name == 'bidaf':
                 self.model = BiDAF(self.config)
-            elif self.config.name == 'bidaf-att':
-                self.model = BiDAF_SelfAttention(self.config)
-            elif self.config.name == 'bidaf-conv-input':
-                self.model = BiDAF_ConvInput(self.config)
-            elif self.config.name == 'mnemonic':
-                self.model = MnemonicReader(self.config)
             else:
                 raise NotImplementedError('Invalid arhitecture name')
 
@@ -74,10 +50,9 @@ class Main:
 
         t = tqdm(range(step, self.config.iterations))
         for i in t:
-            c, ch, q, qh, ct, ce, qt, qe, s, e = self.get_batch('train')
-            feed = { self.model.c_words: c, self.model.c_chars: ch, self.model.c_pos: ct, self.model.c_ner: ce,
-                        self.model.q_words: q, self.model.q_chars: qh, self.model.q_pos: qt, self.model.q_ner: qe,
-                        self.model.start: s, self.model.end: e }
+            c, ch, q, qh, s, e = self.get_batch('train')
+            feed = { self.model.c_words: c, self.model.c_chars: ch, self.model.q_words: q,
+                     self.model.q_chars: qh, self.model.start: s, self.model.end: e }
 
             _, loss = sess.run([self.model.optimize, self.model.loss], feed)
             t.set_description('loss: %.2f' % loss)
@@ -91,7 +66,7 @@ class Main:
                 if i % 5000 == 0 and self.config.ema_decay > 0:
                     sess.run(self.model.assign_vars)
                     ema, ema_f1 = self.test(sess)
-                    print('\nIteration EMA: %d - Exact match: %.2f\tf1: %.2f' % (i, ema, ema_f1))
+                    print('Iteration EMA: %d - Exact match: %.2f\tf1: %.2f' % (i, ema, ema_f1))
 
                 if f1 > best_f1:
                     best_f1 = f1
@@ -102,9 +77,8 @@ class Main:
     def test(self, sess):
         total = em = f1 = 0
         for i in range(0, len(self.devset), 50):
-            tokens, c, ch, q, qh, ct, ce, qt, qe, answers = self.get_batch('test', i, i + 50)
-            feed = { self.model.c_words: c, self.model.c_chars: ch, self.model.c_pos: ct, self.model.c_ner: ce,
-                    self.model.q_words: q, self.model.q_chars: qh, self.model.q_pos: qt, self.model.q_ner: qe }
+            tokens, c, ch, q, qh, answers = self.get_batch('test', i, i + 50)
+            feed = { self.model.c_words: c, self.model.c_chars: ch, self.model.q_words: q, self.model.q_chars: qh }
 
             start, end = sess.run([self.model.pred_start, self.model.pred_end], feed)
             start, end = self.get_best_spans(start, end)
@@ -144,8 +118,8 @@ class Main:
         return np.array(starts), np.array(ends)
 
     def get_batch(self, mode='train', start=None, end=None):
-        PAD = '='
-        UNK = '_'
+        PAD = 'PAD'
+        UNK = 'UNK'
 
         data = self.trainset if mode == 'train' else self.devset
 
@@ -156,91 +130,81 @@ class Main:
             batch = [data[i] for i in indexes]
 
         def _embedding(w):
-            if w in self.embed:
-                return self.embed[w]
-            elif w.lower() in self.embed:
-                return self.embed[w.lower()]
+            if w in self.word2index:
+                return self.word2index[w]
+            elif w.lower() in self.word2index:
+                return self.word2index[w.lower()]
             else:
-                return self.embed[UNK]
+                return self.word2index[UNK]
 
-        def add_padding(data, dictionary, length, max_length):
-            return [dictionary[x] for x in data][:max_length] + [dictionary[UNK]] * (max_length - length)
+        tokens, c_words, c_chars, q_words, q_chars, start, end, answers = [], [], [], [], [], [], [], []
 
-        max_ch = self.config.max_char_len
-        unk_ch_ind = self.char2index[UNK]
-        contexts, context_ch, questions, question_ch = [], [], [], []
-        context_tags, context_entities, question_tags, question_entities = [], [], [], []
         for b in batch:
-            c_length = len(b[4])
-            q_length = len(b[7])
-            context = b[4][:self.config.context_len] + tuple(PAD) * (self.config.context_len - c_length)
-            question = b[7][:self.config.question_len] + tuple(PAD) * (self.config.question_len - q_length)
-            contexts.append([_embedding(x) for x in context])
-            questions.append([_embedding(x) for x in question])
-            context_ch.append([[self.char2index.get(c, unk_ch_ind) for c in list(x[:max_ch] + PAD * (max_ch - len(x)))] for x in context])
-            question_ch.append([[self.char2index.get(c, unk_ch_ind) for c in list(x[:max_ch] + PAD * (max_ch - len(x)))] for x in question])
-            context_tags.append(add_padding(b[5], self.tag2index, c_length, self.config.context_len))
-            context_entities.append(add_padding(b[6], self.entity2index, c_length, self.config.context_len))
-            question_tags.append(add_padding(b[8], self.tag2index, q_length, self.config.question_len))
-            question_entities.append(add_padding(b[9], self.entity2index, q_length, self.config.question_len))
+            c_tokens = b[4][:self.config.context_len]
+            q_tokens = b[7][:self.config.question_len]
+
+            c_pad = self.config.context_len - len(c_tokens)
+            q_pad = self.config.question_len - len(q_tokens)
+
+            c_words.append([_embedding(x) for x in c_tokens + tuple([PAD]) * c_pad])
+            q_words.append([_embedding(x) for x in q_tokens + tuple([PAD]) * q_pad])
+
+            cch = [list(x)[:self.config.max_char_len] + [PAD] * (self.config.max_char_len - len(list(x))) for x in c_tokens + tuple(['']) * c_pad]
+            c_chars.append([[self.char2index.get(x, self.char2index[UNK]) for x in s] for s in cch])
+
+            qch = [list(x)[:self.config.max_char_len] + [PAD] * (self.config.max_char_len - len(list(x))) for x in q_tokens + tuple(['']) * q_pad]
+            q_chars.append([[self.char2index.get(x, self.char2index[UNK]) for x in s] for s in qch])
+
+            if mode == 'train':
+                start.append(min(b[-2], self.config.context_len - 1))
+                end.append(min(b[-1], self.config.question_len - 1))
+            else:
+                tokens.append(c_tokens)
+                answers.append(b[3])
+
+        c_words = np.array(c_words)
+        c_chars = np.array(c_chars)
+        q_words = np.array(q_words)
+        q_chars = np.array(q_chars)
+        start = np.array(start)
+        end = np.array(end)
 
         if mode == 'train':
-            starts = [min(x[-2], self.config.context_len - 1) for x in batch]
-            ends = [min(x[-1], self.config.context_len - 1) for x in batch]
-
-            return contexts, context_ch, questions, question_ch, context_tags, \
-                context_entities, question_tags, question_entities, np.array(starts), np.array(ends)
+            return c_words, c_chars, q_words, q_chars, start, end
         else:
-            tokens = [x[4] for x in batch]
-            answers = [x[3] for x in batch]
-            return tokens, contexts, context_ch, questions, question_ch, context_tags, \
-                context_entities, question_tags, question_entities, answers
+            return tokens, c_words, c_chars, q_words, q_chars, answers
 
     def get_args(self):
         parser = argparse.ArgumentParser(description='')
         parser.add_argument('--name',           required=True,      type=str)
         parser.add_argument('--mode',           default = 'train',  type=str)
-        parser.add_argument('--print_every',    default = 50,       type=int)
         parser.add_argument('--batch',          default = 32,       type=int)
         parser.add_argument('--save_every',     default = 1000,     type=int)
         parser.add_argument('--iterations',     default = 30001,    type=int)
         parser.add_argument('--context_len',    default = 400,      type=int)
         parser.add_argument('--question_len',   default = 30,       type=int)
         parser.add_argument('--answer_len',     default = 15,       type=int)
-        parser.add_argument('--word_embed',     default = 300,      type=int)
-        parser.add_argument('--char_embed',     default = 200,      type=int)
-        parser.add_argument('--pos_embed',      default = 20,       type=int)
-        parser.add_argument('--ner_embed',      default = 20,       type=int)
+        parser.add_argument('--char_embed',     default = 64,       type=int)
         parser.add_argument('--max_char_len',   default = 16,       type=int)
         parser.add_argument('--learning_rate',  default = 0.001,    type=float)
         parser.add_argument('--filters',        default = 128,      type=int)
         parser.add_argument('--dropout',        default = 0.1,      type=float)
         parser.add_argument('--l2',             default = 3e-7,     type=float)
         parser.add_argument('--grad_clip',      default = 5.0,      type=float)
-        parser.add_argument('--ema_decay',      default = 0.9999,   type=float)
-
-        # qanet specific
-        parser.add_argument('--encoder_num_blocks', default = 1, type=int)
-        parser.add_argument('--encoder_num_convs',  default = 4, type=int)
-        parser.add_argument('--encoder_kernel',     default = 7, type=int)
-        parser.add_argument('--model_num_blocks',   default = 7, type=int)
-        parser.add_argument('--model_num_convs',    default = 2, type=int)
-        parser.add_argument('--model_kernel',       default = 5, type=int)
-        parser.add_argument('--passes',             default = 3, type=int)
-        parser.add_argument('--num_heads',          default = 8, type=int)
-
-        # bidaf specific
-        parser.add_argument('--cell_size', default = 128, type=int)
-
-        # mnemonic specific
-        parser.add_argument('--aligner_hops', default = 2, type=int)
-        parser.add_argument('--pointer_hops', default = 2, type=int)
+        parser.add_argument('--ema_decay',      default = 0.999,    type=float)
+        parser.add_argument('--cell_size',      default = 128,      type=int)
+        parser.add_argument('--cell_type',      default = 'gru',    type=str)
 
         args = parser.parse_args()
         args.training = args.mode == 'train'
 
+        if not args.training:
+            args.dropout = 0.0
+
         for a in vars(args):
             print('{:<20}'.format(a), getattr(args, a))
+
+        args.embed_size = 300 + args.char_embed
 
         return args
 

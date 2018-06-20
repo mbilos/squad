@@ -1,10 +1,11 @@
 import os
-import pickle
-import json
 import numpy as np
-from tqdm import tqdm
-from collections import Counter
+import json
+import pickle
 import nltk
+from collections import Counter
+from tqdm import tqdm
+
 
 def get_data(mode='train'):
 
@@ -27,10 +28,6 @@ def get_data(mode='train'):
     with open('./data/' + mode + '-v1.1.json') as f:
         data = json.load(f)['data']
 
-    if mode == 'train':
-        with open('data/german_to_english.json', encoding='utf-8') as f:
-            augmented = json.load(f)
-
     rows = []
     errors = 0
     count = 0
@@ -40,8 +37,6 @@ def get_data(mode='train'):
         for paragraph in article['paragraphs']:
 
             contexts = [paragraph['context']]
-            if mode == 'train':
-                contexts.append(augmented[count])
 
             for context in contexts:
 
@@ -84,24 +79,13 @@ def get_data(mode='train'):
     print('Finished cleaning data with', errors, 'errors out of', len(rows))
     return rows
 
-def save_data():
+
+def prepare_data():
+    UNK = 'UNK'
+    PAD = 'PAD'
+
     train = get_data('train')
     dev = get_data('dev')
-
-    with open('./data/train.pickle', 'wb') as f:
-        pickle.dump(train, f)
-    with open('./data/dev.pickle', 'wb') as f:
-        pickle.dump(dev, f)
-
-def word_embedding():
-
-    with open('./data/train.pickle', 'rb') as f:
-        train = pickle.load(f)
-    with open('./data/dev.pickle', 'rb') as f:
-        dev = pickle.load(f)
-
-    assert all([' '.join(train[i][4][train[i][-2]:train[i][-1]]) == ' '.join(train[i][-5]) for i in range(len(train))])
-    assert all([train[i][3] in train[i][1] for i in range(len(train))])
 
     all_words = []
     for d in train:
@@ -109,93 +93,51 @@ def word_embedding():
     for d in dev:
         all_words += set(d[4] + d[7])
 
-    # CHARACTERS
     all_characters = Counter(''.join(all_words))
-    character_to_index = { x[0]: i for i,x in enumerate(all_characters.most_common(100)) }
-    with open('data/character_to_index.json', 'w') as f:
-        json.dump(character_to_index, f, indent=2)
+    char2index = { x[0]: i + 2 for i,x in enumerate(all_characters.most_common(100)) }
+    char2index[PAD] = 0
+    char2index[UNK] = 1
 
-    all_words = set([x for x in all_words])
+    vocab = set(all_words + [x.lower() for x in all_words])
 
-    def save_embedding(input_file, output_file):
-        embedding = {}
-        lower = set([x.lower() for x in all_words])
+    words = [PAD, UNK]
+    embedding = [np.zeros(300), np.zeros(300)]
 
-        with open(input_file, 'r', encoding='utf8') as f:
-            for line in f:
-                word, vec = line.strip().split(' ', 1)
-                if word in all_words or word in lower:
-                    embedding.update({ word: np.array(vec.split(' '), dtype=float) })
-        with open(output_file, 'wb') as f:
-            pickle.dump(embedding, f)
-        print('saved', f)
+    with open(os.path.join('data', 'glove.6B.300d.txt'), 'r', encoding='utf8') as f:
+        for line in f:
+            word, vec = line.strip().split(' ', 1)
+            if word in vocab:
+                words.append(word)
+                embedding.append(np.array(vec.split(' '), dtype=float))
 
-    save_embedding('data/glove.6B.50d.txt',  'data/50d.pickle')
-    save_embedding('data/glove.6B.100d.txt', 'data/100d.pickle')
-    save_embedding('data/glove.6B.200d.txt', 'data/200d.pickle')
-    save_embedding('data/glove.840B.300d.txt', 'data/300d.pickle')
+    word2index = { x: i for i,x in enumerate(words) }
+    embedding = np.array(embedding)
 
-    # PART OF SPEECH
-    all_tags = set([x for s in train for x in s[5]])
-    tag_to_index = { x: i for i,x in enumerate(all_tags) }
-    with open('data/tag_to_index.json', 'w') as f:
-        json.dump(tag_to_index, f, indent=2)
+    with open('data/train.pickle', 'wb') as f:
+        pickle.dump(train, f)
+    with open('data/dev.pickle', 'wb') as f:
+        pickle.dump(dev, f)
+    with open('data/word_embed.pickle', 'wb') as f:
+        pickle.dump(embedding, f)
+    with open('data/char2index.json', 'w') as f:
+        json.dump(char2index, f, indent=2)
+    with open('data/word2index.json', 'w') as f:
+        json.dump(word2index, f, indent=2)
 
-    # NAMED ENTITY
-    all_entities = set([x for s in train for x in s[6]])
-    entity_to_index = { x: i for i,x in enumerate(all_entities) }
+    if not os.path.exists('models'):
+        os.makedirs('models')
+        print('Created empty dir "models"')
 
-    with open('data/entity_to_index.json', 'w') as f:
-        json.dump(entity_to_index, f, indent=2)
-
-def read_data(word_embed_size):
-    PAD = '='
-    UNK = '_'
-
+def data():
     with open('data/train.pickle', 'rb') as f:
         train = pickle.load(f)
     with open('data/dev.pickle', 'rb') as f:
         dev = pickle.load(f)
-    with open('data/%dd.pickle' % word_embed_size, 'rb') as f:
+    with open('data/word_embed.pickle', 'rb') as f:
         embed = pickle.load(f)
-        embed[PAD] = np.zeros((word_embed_size))
-        embed[UNK] = np.zeros((word_embed_size))
+    with open('data/word2index.json', 'r') as f:
+        word2index = json.load(f)
+    with open('data/char2index.json', 'r') as f:
+        char2index = json.load(f)
 
-    with open('data/character_to_index.json', 'r') as f:
-        character2index = json.load(f)
-        character2index[UNK] = len(character2index)
-        character2index[PAD] = len(character2index) # not same as prev line because adding UNK added 1 to len
-        index2character = { i: x for x,i in character2index.items() }
-
-    with open('data/tag_to_index.json', 'r') as f:
-        tag2index = json.load(f)
-        tag2index[UNK] = len(tag2index)
-        tag2index[PAD] = len(tag2index)
-        index2tag = { i: x for x,i in tag2index.items() }
-
-    with open('data/entity_to_index.json', 'r') as f:
-        entity2index = json.load(f)
-        entity2index[UNK] = len(entity2index)
-        entity2index[PAD] = len(entity2index)
-        index2entity = { i: x for x,i in entity2index.items() }
-
-    return train, dev, embed, character2index, index2character, \
-        tag2index, index2tag, entity2index, index2entity
-
-def data(word_embed_size):
-    if not os.path.exists('models'):
-        os.makedirs('models')
-    if not os.path.exists(os.path.join('data', 'train.pickle')) or not os.path.exists(os.path.join('data', 'dev.pickle')):
-        print('Train or dev file doesn\'t exist. Creating now...')
-        save_data()
-        word_embedding()
-        print('Train and dev files saved')
-    elif not os.path.exists(os.path.join('data', 'tag_to_index.json')):
-        print('Generating embeddings...')
-        word_embedding()
-    else:
-        print('Reading data from file...')
-
-    train, dev, embed, character2index, index2character, tag2index, index2tag, entity2index, index2entity = read_data(word_embed_size)
-
-    return train, dev, embed, character2index, index2character, tag2index, index2tag, entity2index, index2entity
+    return train, dev, embed, word2index, char2index
