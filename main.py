@@ -8,6 +8,7 @@ from tqdm import tqdm
 import read
 import evaluate
 from qanet import QANet
+from qanet_simple import QANetSimple
 from bidaf import BiDAF
 from bidaf_self_attention import BiDAF_SelfAttention
 from bidaf_conv_input import BiDAF_ConvInput
@@ -32,6 +33,8 @@ class Main:
         with tf.Graph().as_default() as g:
             if self.config.name == 'qanet':
                 self.model = QANet(self.config)
+            if self.config.name == 'qanet-simple':
+                self.model = QANetSimple(self.config)
             elif self.config.name == 'bidaf':
                 self.model = BiDAF(self.config)
             elif self.config.name == 'bidaf-att':
