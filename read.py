@@ -87,6 +87,11 @@ def prepare_data():
     train = get_data('train')
     dev = get_data('dev')
 
+    with open('data/train.pickle', 'wb') as f:
+        pickle.dump(train, f)
+    with open('data/dev.pickle', 'wb') as f:
+        pickle.dump(dev, f)
+
     all_words = []
     for d in train:
         all_words += set(d[4] + d[7] + d[10])
@@ -103,7 +108,7 @@ def prepare_data():
     words = [PAD, UNK]
     embedding = [np.zeros(300), np.zeros(300)]
 
-    with open(os.path.join('data', 'glove.6B.300d.txt'), 'r', encoding='utf8') as f:
+    with open(os.path.join('data', 'glove.840B.300d.txt'), 'r', encoding='utf8') as f:
         for line in f:
             word, vec = line.strip().split(' ', 1)
             if word in vocab:
@@ -113,10 +118,6 @@ def prepare_data():
     word2index = { x: i for i,x in enumerate(words) }
     embedding = np.array(embedding)
 
-    with open('data/train.pickle', 'wb') as f:
-        pickle.dump(train, f)
-    with open('data/dev.pickle', 'wb') as f:
-        pickle.dump(dev, f)
     with open('data/word_embed.pickle', 'wb') as f:
         pickle.dump(embedding, f)
     with open('data/char2index.json', 'w') as f:
