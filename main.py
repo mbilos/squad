@@ -162,7 +162,7 @@ class Main:
 
             if mode == 'train':
                 start.append(min(b[-2], self.config.context_len - 1))
-                end.append(min(b[-1], self.config.question_len - 1))
+                end.append(min(b[-1], self.config.context_len - 1))
             else:
                 tokens.append(c_tokens)
                 answers.append(b[3])
