@@ -1,5 +1,4 @@
 import tensorflow as tf
-from tensorflow.contrib.rnn import BasicLSTMCell, GRUCell, DropoutWrapper
 
 def get_shape(x):
     static = x.get_shape().as_list()
@@ -20,12 +19,13 @@ def layer_norm(inputs, scope='layer-norm', epsilon=1e-8, reuse=None):
 
 def birnn(inputs, length, dim, cell_type='gru', dropout=0.0, scope='bi-rnn', reuse=None):
     with tf.variable_scope(scope, reuse=reuse):
-        cell = GRUCell if cell_type == 'gru' else BasicLSTMCell
+        outputs, states = tf.nn.bidirectional_dynamic_rnn(
+            tf.nn.rnn_cell.DropoutWrapper(tf.contrib.rnn.GRUCell(dim), input_keep_prob=1.0 - dropout),
+            tf.nn.rnn_cell.DropoutWrapper(tf.contrib.rnn.GRUCell(dim), input_keep_prob=1.0 - dropout),
+            inputs,
+            sequence_length=length,
+            dtype=tf.float32)
 
-        fw = DropoutWrapper(cell(dim), input_keep_prob=1.0 - dropout)
-        bw = DropoutWrapper(cell(dim), input_keep_prob=1.0 - dropout)
-
-        outputs, states = tf.nn.bidirectional_dynamic_rnn(fw, bw, inputs, length, dtype=tf.float32)
         outputs = tf.concat(outputs, -1)
         return outputs
 

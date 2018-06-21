@@ -174,6 +174,8 @@ class Main:
         start = np.array(start)
         end = np.array(end)
 
+        assert np.all(start <= end)
+
         if mode == 'train':
             return c_words, c_chars, q_words, q_chars, start, end
         else:
