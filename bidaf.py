@@ -41,9 +41,13 @@ class BiDAF:
             c = tf.concat([c_w, c_ch], -1)
             q = tf.concat([q_w, q_ch], -1)
 
-        with tf.variable_scope('highway'):
-            c = layers.highway(c)
-            q = layers.highway(q, reuse=True)
+        with tf.variable_scope('highway-1'):
+            c = layers.highway(c, dropout=self.dropout)
+            q = layers.highway(q, dropout=self.dropout, reuse=True)
+
+        with tf.variable_scope('highway-2'):
+            c = layers.highway(c, dropout=self.dropout)
+            q = layers.highway(q, dropout=self.dropout, reuse=True)
 
         with tf.variable_scope('rnn'):
             c = layers.birnn(c, self.c_len, self.config.cell_size, self.config.cell_type, self.dropout)
@@ -59,7 +63,7 @@ class BiDAF:
             memory2 = layers.birnn(memory1, self.c_len, self.config.cell_size, self.config.cell_type, self.dropout)
 
         with tf.variable_scope('start-index') as scope:
-            start_linear = tf.concat([attention, memory1], -1)
+            start_linear = tf.concat([attention, memory2], -1)
             self.start_linear = tf.squeeze(tf.layers.dense(start_linear, 1), -1)
             self.pred_start = tf.nn.softmax(self.start_linear)
 
