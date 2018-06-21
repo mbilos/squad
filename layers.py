@@ -52,7 +52,7 @@ def trilinear(c, q, scope='trilinear', reuse=None):
 
         return c_proj + q_proj + c_q
 
-def bi_attention(c, q, similarity, c_mask=None, q_mask=None, self_att=False, scope='bidaf', reuse=None):
+def bi_attention(c, q, similarity, c_mask=None, q_mask=None, only_c2q=False, scope='bidaf', reuse=None):
 
     def mask(similarity, c_mask, q_mask, mode='add', big_number=1e30):
         shape = get_shape(similarity)
@@ -74,16 +74,15 @@ def bi_attention(c, q, similarity, c_mask=None, q_mask=None, self_att=False, sco
         mul_mask = lambda x: mask(x, c_mask, q_mask, 'mul')
 
         row_norm = mul_mask(tf.nn.softmax(add_mask(similarity), -1))
-        column_norm = mul_mask(tf.nn.softmax(add_mask(similarity), 1))
-
         A = tf.matmul(row_norm, q) # context to query
-        attention = [c, A, c * A]
 
-        if not self_att:
-            B = tf.matmul(tf.matmul(row_norm, column_norm, transpose_b=True), c) # query to context
-            attention.append(c * B)
+        if only_c2q:
+            return A
 
-        attention = tf.concat(attention, -1)
+        column_norm = mul_mask(tf.nn.softmax(add_mask(similarity), 1))
+        B = tf.matmul(tf.matmul(row_norm, column_norm, transpose_b=True), c) # query to context
+
+        attention = tf.concat([c, A, c * A, c * B], -1)
         return attention
 
 def char_embed(inputs, embed, dropout=0.0, scope='char-embedding', reuse=None):
@@ -96,3 +95,13 @@ def char_embed(inputs, embed, dropout=0.0, scope='char-embedding', reuse=None):
         c = tf.reduce_max(c, axis=2)
 
         return c
+
+def sfu(inputs, fusion, scope='semantic-fusion-unit', reuse=None):
+    with tf.variable_scope(scope, reuse=reuse):
+        shape = get_shape(inputs)
+        x = tf.concat([inputs] + fusion, -1)
+
+        res = tf.layers.dense(x, shape[-1], activation=tf.nn.tanh)
+        gate = tf.layers.dense(x, shape[-1], activation=tf.nn.sigmoid)
+
+        return gate * res + (1 - gate) * inputs

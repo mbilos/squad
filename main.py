@@ -8,6 +8,7 @@ import read
 import evaluate
 
 from bidaf import BiDAF
+from mnemonic import MnemonicReader
 
 class Main:
     def __init__(self):
@@ -19,6 +20,8 @@ class Main:
         with tf.Graph().as_default() as g:
             if self.config.name == 'bidaf':
                 self.model = BiDAF(self.config)
+            elif self.config.name == 'mnemonic':
+                self.model = MnemonicReader(self.config)
             else:
                 raise NotImplementedError('Invalid arhitecture name')
 
