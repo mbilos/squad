@@ -111,7 +111,7 @@ def prepare_data():
     with open(os.path.join('data', 'glove.840B.300d.txt'), 'r', encoding='utf8') as f:
         for line in f:
             word, vec = line.strip().split(' ', 1)
-            if word in vocab:
+            if word in vocab and word != UNK and word != PAD:
                 words.append(word)
                 embedding.append(np.array(vec.split(' '), dtype=float))
 

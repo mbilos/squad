@@ -20,7 +20,7 @@ def layer_norm(inputs, scope='layer-norm', epsilon=1e-8, reuse=None):
 
 def birnn(inputs, length, dim, cell_type='gru', dropout=0.0, scope='bi-rnn', reuse=None):
     with tf.variable_scope(scope, reuse=reuse):
-        cell = BasicLSTMCell if cell_type == 'gru' else BasicLSTMCell
+        cell = GRUCell if cell_type == 'gru' else BasicLSTMCell
 
         fw = DropoutWrapper(cell(dim), input_keep_prob=1.0 - dropout)
         bw = DropoutWrapper(cell(dim), input_keep_prob=1.0 - dropout)
@@ -29,11 +29,12 @@ def birnn(inputs, length, dim, cell_type='gru', dropout=0.0, scope='bi-rnn', reu
         outputs = tf.concat(outputs, -1)
         return outputs
 
-def highway(x, scope='highway', reuse=None):
+def highway(x, dropout=0.0, scope='highway', reuse=None):
     with tf.variable_scope(scope, reuse=reuse):
         shape = get_shape(x)
 
         out = tf.layers.dense(x, shape[-1], tf.nn.relu, reuse=reuse)
+        out = tf.layers.dropout(out, rate=dropout)
         keep = tf.layers.dense(x, shape[-1], tf.nn.sigmoid, bias_initializer=tf.constant_initializer(-1), reuse=reuse)
 
         return (1 - keep) * x + keep * out

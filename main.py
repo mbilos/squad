@@ -10,6 +10,8 @@ import evaluate
 from bidaf import BiDAF
 from mnemonic import MnemonicReader
 
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+
 class Main:
     def __init__(self):
         self.config = self.get_args()
