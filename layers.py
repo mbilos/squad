@@ -27,7 +27,7 @@ def birnn(inputs, length, dim, cell_type='gru', dropout=0.0, scope='bi-rnn', reu
             dtype=tf.float32)
 
         outputs = tf.concat(outputs, -1)
-        return outputs
+        return outputs, states
 
 def highway(x, dropout=0.0, scope='highway', reuse=None):
     with tf.variable_scope(scope, reuse=reuse):

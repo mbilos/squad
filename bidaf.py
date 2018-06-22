@@ -50,17 +50,17 @@ class BiDAF:
             q = layers.highway(q, dropout=self.dropout, reuse=True)
 
         with tf.variable_scope('rnn'):
-            c = layers.birnn(c, self.c_len, self.config.cell_size, self.config.cell_type, self.dropout)
-            q = layers.birnn(q, self.q_len, self.config.cell_size, self.config.cell_type, self.dropout, reuse=True)
+            c, _ = layers.birnn(c, self.c_len, self.config.cell_size, self.config.cell_type, self.dropout)
+            q, _ = layers.birnn(q, self.q_len, self.config.cell_size, self.config.cell_type, self.dropout, reuse=True)
 
         with tf.variable_scope('attention'):
             attention = layers.bi_attention(c, q, layers.trilinear(c, q), self.c_mask, self.q_mask)
 
         with tf.variable_scope('memory1'):
-            memory1 = layers.birnn(attention, self.c_len, self.config.cell_size, self.config.cell_type, self.dropout)
+            memory1, _ = layers.birnn(attention, self.c_len, self.config.cell_size, self.config.cell_type, self.dropout)
 
         with tf.variable_scope('memory2'):
-            memory2 = layers.birnn(memory1, self.c_len, self.config.cell_size, self.config.cell_type, self.dropout)
+            memory2, _ = layers.birnn(memory1, self.c_len, self.config.cell_size, self.config.cell_type, self.dropout)
 
         with tf.variable_scope('start-index') as scope:
             start_linear = tf.concat([attention, memory2], -1)
@@ -69,7 +69,7 @@ class BiDAF:
 
         with tf.variable_scope('end-index') as scope:
             end_input = tf.concat([tf.expand_dims(self.start_linear, -1), attention, memory2], -1)
-            memory3 = layers.birnn(end_input, self.c_len, self.config.cell_size, self.config.cell_type, self.dropout)
+            memory3, _ = layers.birnn(end_input, self.c_len, self.config.cell_size, self.config.cell_type, self.dropout)
 
             self.end_linear = tf.squeeze(tf.layers.dense(memory3, 1), -1)
             self.pred_end = tf.nn.softmax(self.end_linear)
