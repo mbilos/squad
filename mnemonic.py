@@ -100,6 +100,9 @@ class MnemonicReader:
         self.start_linear = start
         self.end_linear = end
 
+        self.pred_start = p_start
+        self.pred_end = p_end
+
         with tf.variable_scope('loss') as scope:
             loss1 = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=self.start_linear, labels=self.start)
             loss2 = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=self.end_linear, labels=self.end)
