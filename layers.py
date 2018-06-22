@@ -29,13 +29,11 @@ def birnn(inputs, length, dim, cell_type='gru', dropout=0.0, scope='bi-rnn', reu
         outputs = tf.concat(outputs, -1)
         return outputs, states
 
-def highway(x, dropout=0.0, scope='highway', reuse=None):
+def highway(x, dim, dropout=0.0, scope='highway', reuse=None):
     with tf.variable_scope(scope, reuse=reuse):
-        shape = get_shape(x)
-
-        out = tf.layers.dense(x, shape[-1], tf.nn.relu, reuse=reuse)
+        out = tf.layers.dense(x, dim, tf.nn.relu, reuse=reuse)
         out = tf.layers.dropout(out, rate=dropout)
-        keep = tf.layers.dense(x, shape[-1], tf.nn.sigmoid, bias_initializer=tf.constant_initializer(-1), reuse=reuse)
+        keep = tf.layers.dense(x, dim, tf.nn.sigmoid, bias_initializer=tf.constant_initializer(-1), reuse=reuse)
 
         return (1 - keep) * x + keep * out
 
