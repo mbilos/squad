@@ -72,7 +72,7 @@ class MnemonicReader:
                 s = tf.concat([c, z, c * z], -1) # [batch, context_len, cell_size * 6]
                 with tf.variable_scope('relu'):
                     s = tf.layers.dense(s, self.config.cell_size, activation=tf.nn.relu, reuse=reuse) # [batch, context_len, cell_size * 2]
-                    s = tf.layers.dropout(s, rate=self.config.dropout, training=self.config.training)
+                    s = tf.nn.dropout(s, 1.0 - self.dropout)
                 with tf.variable_scope('linear'):
                     s = tf.squeeze(tf.layers.dense(s, 1, use_bias=False, reuse=reuse), -1) # [batch, context_len]
                     p = tf.nn.softmax(s - 1e30 * (1 - tf.cast(self.c_mask, tf.float32))) # [batch, context_len]

@@ -1,4 +1,5 @@
 import tensorflow as tf
+import math
 
 def get_shape(x):
     static = x.get_shape().as_list()
@@ -27,12 +28,12 @@ def birnn(inputs, length, dim, cell_type='gru', dropout=0.0, scope='bi-rnn', reu
             dtype=tf.float32)
 
         outputs = tf.concat(outputs, -1)
-        return outputs, states
+        return outputs
 
 def highway(x, dim, dropout=0.0, scope='highway', reuse=None):
     with tf.variable_scope(scope, reuse=reuse):
         out = tf.layers.dense(x, dim, tf.nn.relu, reuse=reuse)
-        out = tf.layers.dropout(out, rate=dropout)
+        out = tf.nn.dropout(out, 1.0 - dropout)
         keep = tf.layers.dense(x, dim, tf.nn.sigmoid, bias_initializer=tf.constant_initializer(-1), reuse=reuse)
 
         return (1 - keep) * x + keep * out
@@ -104,3 +105,62 @@ def sfu(inputs, fusion, scope='semantic-fusion-unit', reuse=None):
         gate = tf.layers.dense(x, shape[-1], activation=tf.nn.sigmoid)
 
         return gate * res + (1 - gate) * inputs
+
+def positional_encoding(inputs, min_timescale=1.0, max_timescale=1.0e4, start_index=0):
+    # from https://github.com/tensorflow/tensor2tensor/blob/master/tensor2tensor/layers/common_attention.py
+    _, length, channels = get_shape(inputs)
+
+    position = tf.to_float(tf.range(length) + start_index)
+    num_timescales = channels // 2
+    log_timescale_increment = (math.log(float(max_timescale) / float(min_timescale)) / (tf.to_float(num_timescales) - 1))
+    inv_timescales = min_timescale * tf.exp(tf.to_float(tf.range(num_timescales)) * -log_timescale_increment)
+    scaled_time = tf.expand_dims(position, 1) * tf.expand_dims(inv_timescales, 0)
+    signal = tf.concat([tf.sin(scaled_time), tf.cos(scaled_time)], axis=1)
+    signal = tf.pad(signal, [[0, 0], [0, tf.mod(channels, 2)]])
+    signal = tf.reshape(signal, [1, length, channels])
+
+    return inputs + signal
+
+def encoder_block(inputs, num_blocks, num_convolutions, kernel, mask, dropout=0.0, scope='encoder', reuse=None):
+
+    def layer_dropout(prev, residual, dropout):
+        pred = tf.random_uniform([], 0.0, 1.0) < dropout
+        return tf.cond(pred, lambda: prev, lambda: prev + residual)
+
+    with tf.variable_scope(scope, reuse=reuse):
+        block = [inputs]
+
+        for i in range(num_blocks):
+            with tf.variable_scope('encoder-block-%d' % i, reuse=reuse):
+                dim = get_shape(block[i])[-1]
+
+                pos = positional_encoding(block[i])
+
+                conv = [pos]
+                for j in range(num_convolutions):
+                    with tf.variable_scope('residual-block-%d' % j, reuse=reuse):
+                        x = layer_norm(conv[j], reuse=reuse)
+                        if (j + 1) % 2 == 0:
+                            x = tf.nn.dropout(x, 1.0 - dropout)
+                        x = tf.layers.conv1d(x, dim, kernel, padding='same', activation=tf.nn.relu, reuse=reuse)
+                        res = layer_dropout(conv[j], x, (j + 1) / num_convolutions * dropout)
+                        conv.append(res)
+
+                with tf.variable_scope('self-attention', reuse=reuse) as scope:
+                    x = layer_norm(conv[-1], reuse=reuse)
+
+                    similarity = trilinear(x, x, reuse=reuse)
+                    attention = bi_attention(x, x, similarity, mask, mask, only_c2q=True, reuse=reuse)
+                    res = tf.layers.dense(res, dim, activation=tf.nn.relu)
+
+                    self_attention = layer_dropout(conv[-1], res, (i + 1) / num_blocks * dropout)
+
+                with tf.variable_scope('feedforward', reuse=reuse):
+                    x = layer_norm(self_attention, reuse=reuse)
+                    x = tf.layers.dense(x, dim, activation=tf.nn.relu, reuse=reuse)
+                    res = tf.nn.dropout(x, 1.0 - dropout)
+                    ff = layer_dropout(self_attention, res, (i + 1) / num_blocks * dropout)
+
+                block.append(ff)
+
+        return block[-1]

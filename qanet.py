@@ -1,7 +1,7 @@
 import tensorflow as tf
 import layers
 
-class BiDAF:
+class QANet:
     def __init__(self, config):
         self.config = config
 
@@ -41,38 +41,49 @@ class BiDAF:
             c = tf.concat([c_w, c_ch], -1)
             q = tf.concat([q_w, q_ch], -1)
 
-        with tf.variable_scope('highway-1'):
-            c = layers.highway(c, self.config.embed_size, dropout=self.dropout)
-            q = layers.highway(q, self.config.embed_size, dropout=self.dropout, reuse=True)
+        with tf.variable_scope('input-encoder'):
+            c = layers.encoder_block(c,
+                                     num_blocks=1,
+                                     num_convolutions=4,
+                                     kernel=7,
+                                     mask=self.c_mask,
+                                     dropout=self.dropout)
 
-        with tf.variable_scope('highway-2'):
-            c = layers.highway(c, self.config.embed_size, dropout=self.dropout)
-            q = layers.highway(q, self.config.embed_size, dropout=self.dropout, reuse=True)
-
-        with tf.variable_scope('rnn'):
-            c = layers.birnn(c, self.c_len, self.config.cell_size, self.config.cell_type, self.dropout)
-            q = layers.birnn(q, self.q_len, self.config.cell_size, self.config.cell_type, self.dropout, reuse=True)
+            q = layers.encoder_block(q,
+                                     num_blocks=1,
+                                     num_convolutions=4,
+                                     kernel=7,
+                                     mask=self.q_mask,
+                                     dropout=self.dropout,
+                                     reuse=True)
 
         with tf.variable_scope('attention'):
             attention = layers.bi_attention(c, q, layers.trilinear(c, q), self.c_mask, self.q_mask)
+            attention = tf.layers.conv1d(attention, self.config.filters, 1, padding='same')
 
-        with tf.variable_scope('memory1'):
-            memory1 = layers.birnn(attention, self.c_len, self.config.cell_size, self.config.cell_type, self.dropout)
-
-        with tf.variable_scope('memory2'):
-            memory2 = layers.birnn(memory1, self.c_len, self.config.cell_size, self.config.cell_type, self.dropout)
+        modeling = [attention]
+        for i in range(3):
+            reuse = i > 0
+            m = layers.encoder_block(modeling[i],
+                                     num_blocks=7,
+                                     num_convolutions=2,
+                                     kernel=5,
+                                     mask=self.c_mask,
+                                     dropout=self.dropout,
+                                     reuse=reuse)
+            if i % 2 == 0:
+                m = tf.nn.dropout(m, 1.0 - self.dropout)
+            modeling.append(m)
 
         with tf.variable_scope('start-index') as scope:
-            start_linear = tf.concat([attention, memory2], -1)
-            self.start_linear = tf.squeeze(tf.layers.dense(start_linear, 1), -1)
-            self.pred_start = tf.nn.softmax(self.start_linear)
+            self.start_linear = tf.concat([modeling[-3], modeling[-2]], -1)
+            self.start_linear = tf.squeeze(tf.layers.dense(self.start_linear, 1, use_bias=False), -1)
+            self.pred_start = tf.nn.softmax(self.start_linear, name='pred-start')
 
         with tf.variable_scope('end-index') as scope:
-            end_input = tf.concat([tf.expand_dims(self.start_linear, -1), attention, memory2], -1)
-            memory3 = layers.birnn(end_input, self.c_len, self.config.cell_size, self.config.cell_type, self.dropout)
-
-            self.end_linear = tf.squeeze(tf.layers.dense(memory3, 1), -1)
-            self.pred_end = tf.nn.softmax(self.end_linear)
+            self.end_linear = tf.concat([modeling[-3], modeling[-1]], -1)
+            self.end_linear = tf.squeeze(tf.layers.dense(self.end_linear, 1, use_bias=False), -1)
+            self.pred_end = tf.nn.softmax(self.end_linear, name='pred-end')
 
         with tf.variable_scope('loss') as scope:
             loss1 = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=self.start_linear, labels=self.start)

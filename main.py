@@ -9,6 +9,7 @@ import evaluate
 
 from bidaf import BiDAF
 from mnemonic import MnemonicReader
+from qanet import QANet
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
@@ -24,6 +25,8 @@ class Main:
                 self.model = BiDAF(self.config)
             elif self.config.name == 'mnemonic':
                 self.model = MnemonicReader(self.config)
+            elif self.config.name == 'qanet':
+                self.model = QANet(self.config)
             else:
                 raise NotImplementedError('Invalid arhitecture name')
 
