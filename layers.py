@@ -32,9 +32,11 @@ def birnn(inputs, length, dim, cell_type='gru', dropout=0.0, scope='bi-rnn', reu
 
 def highway(x, dim, dropout=0.0, scope='highway', reuse=None):
     with tf.variable_scope(scope, reuse=reuse):
-        out = tf.layers.dense(x, dim, tf.nn.relu, reuse=reuse)
-        out = tf.nn.dropout(out, 1.0 - dropout)
-        keep = tf.layers.dense(x, dim, tf.nn.sigmoid, bias_initializer=tf.constant_initializer(-1), reuse=reuse)
+        with tf.variable_scope('out', reuse=reuse):
+            out = tf.layers.dense(x, dim, tf.nn.relu, reuse=reuse)
+            out = tf.nn.dropout(out, 1.0 - dropout)
+        with tf.variable_scope('out', reuse=reuse):
+            keep = tf.layers.dense(x, dim, tf.nn.sigmoid, bias_initializer=tf.constant_initializer(-2), reuse=reuse)
 
         return (1 - keep) * x + keep * out
 
@@ -58,8 +60,10 @@ def trilinear(c, q, scope='trilinear', reuse=None):
         w_dot = tf.get_variable('w-dot', [1, 1, shape[-1]], tf.float32)
         c_dot = c * w_dot
 
-        c_proj = tf.layers.dense(c, 1, use_bias=False)
-        q_proj = tf.transpose(tf.layers.dense(q, 1, use_bias=False), [0, 2, 1])
+        with tf.variable_scope('c-proj', reuse=reuse):
+            c_proj = tf.layers.dense(c, 1, use_bias=False, reuse=reuse)
+        with tf.variable_scope('q-proj', reuse=reuse):
+            q_proj = tf.transpose(tf.layers.dense(q, 1, use_bias=False, reuse=reuse), [0, 2, 1])
 
         c_q = tf.matmul(c_dot, q, transpose_b=True)
 
@@ -114,8 +118,10 @@ def sfu(inputs, fusion, scope='semantic-fusion-unit', reuse=None):
         shape = get_shape(inputs)
         x = tf.concat([inputs] + fusion, -1)
 
-        res = tf.layers.dense(x, shape[-1], activation=tf.nn.tanh)
-        gate = tf.layers.dense(x, shape[-1], activation=tf.nn.sigmoid)
+        with tf.variable_scope('res', reuse=reuse):
+            res = tf.layers.dense(x, shape[-1], activation=tf.nn.tanh, reuse=reuse)
+        with tf.variable_scope('gate', reuse=reuse):
+            gate = tf.layers.dense(x, shape[-1], activation=tf.nn.sigmoid, reuse=reuse)
 
         return gate * res + (1 - gate) * inputs
 
