@@ -38,6 +38,19 @@ def highway(x, dim, dropout=0.0, scope='highway', reuse=None):
 
         return (1 - keep) * x + keep * out
 
+def gated_connection(prev, current, scope='gated-connection', reuse=None):
+    with tf.variable_scope(scope, reuse=reuse):
+        shape = current.get_shape().as_list()
+
+        keep = tf.layers.dense(
+            current,
+            shape[-1],
+            activation=tf.sigmoid,
+            bias_initializer=tf.constant_initializer(-2),
+            reuse=reuse)
+
+        return (1 - keep) * prev + keep * current
+
 def trilinear(c, q, scope='trilinear', reuse=None):
     with tf.variable_scope(scope, reuse=reuse):
         shape = get_shape(c)
