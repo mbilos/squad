@@ -42,22 +42,16 @@ class BiDAF:
             q = tf.concat([q_w, q_ch], -1)
 
         with tf.variable_scope('highway-1'):
-            c_h1 = tf.layers.dense(c, self.config.embed_size, activation=tf.nn.relu)
-            c_h1 = layers.gated_connection(c, tf.nn.dropout(c_h1, 1.0 - self.dropout))
-
-            q_h1 = tf.layers.dense(q, self.config.embed_size, activation=tf.nn.relu, reuse=True)
-            q_h1 = layers.gated_connection(q, tf.nn.dropout(q_h1, 1.0 - self.dropout), reuse=True)
+            c = layers.highway(c, self.config.embed_size, dropout=self.dropout)
+            q = layers.highway(q, self.config.embed_size, dropout=self.dropout, reuse=True)
 
         with tf.variable_scope('highway-2'):
-            c_h2 = tf.layers.dense(c_h1, self.config.embed_size, activation=tf.nn.relu)
-            c_h2 = layers.gated_connection(c_h1, tf.nn.dropout(c_h2, 1.0 - self.dropout))
-
-            q_h2 = tf.layers.dense(q_h1, self.config.embed_size, activation=tf.nn.relu, reuse=True)
-            q_h2 = layers.gated_connection(q_h1, tf.nn.dropout(q_h2, 1.0 - self.dropout), reuse=True)
+            c = layers.highway(c, self.config.embed_size, dropout=self.dropout)
+            q = layers.highway(q, self.config.embed_size, dropout=self.dropout, reuse=True)
 
         with tf.variable_scope('rnn'):
-            c_rnn = layers.birnn(c_h2, self.c_len, self.config.cell_size, self.config.cell_type, self.dropout)
-            q_rnn = layers.birnn(q_h2, self.q_len, self.config.cell_size, self.config.cell_type, self.dropout, reuse=True)
+            c_rnn = layers.birnn(c, self.c_len, self.config.cell_size, self.config.cell_type, self.dropout)
+            q_rnn = layers.birnn(q, self.q_len, self.config.cell_size, self.config.cell_type, self.dropout, reuse=True)
 
         with tf.variable_scope('attention'):
             attention = layers.bi_attention(c_rnn, q_rnn, layers.trilinear(c_rnn, q_rnn), self.c_mask, self.q_mask)

@@ -35,7 +35,7 @@ def highway(x, dim, dropout=0.0, scope='highway', reuse=None):
         with tf.variable_scope('out', reuse=reuse):
             out = tf.layers.dense(x, dim, tf.nn.relu, reuse=reuse)
             out = tf.nn.dropout(out, 1.0 - dropout)
-        with tf.variable_scope('out', reuse=reuse):
+        with tf.variable_scope('keep', reuse=reuse):
             keep = tf.layers.dense(x, dim, tf.nn.sigmoid, bias_initializer=tf.constant_initializer(-2), reuse=reuse)
 
         return (1 - keep) * x + keep * out
