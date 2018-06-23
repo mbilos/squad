@@ -1,6 +1,52 @@
 import tensorflow as tf
 import layers
 
+from tensorflow.python.ops import control_flow_ops
+from tensorflow.python.ops import math_ops
+from tensorflow.python.ops import state_ops
+from tensorflow.python.framework import ops
+from tensorflow.python.training import optimizer
+
+class AdamaxOptimizer(optimizer.Optimizer):
+    # from https://github.com/openai/iaf/blob/master/tf_utils/adamax.py
+    def __init__(self, learning_rate=2e-3, beta1=0.9, beta2=0.999, use_locking=False, name="Adamax"):
+        super(AdamaxOptimizer, self).__init__(use_locking, name)
+        self._lr = learning_rate
+        self._beta1 = beta1
+        self._beta2 = beta2
+
+        self._lr_t = None
+        self._beta1_t = None
+        self._beta2_t = None
+
+    def _prepare(self):
+        self._lr_t = ops.convert_to_tensor(self._lr, name="learning_rate")
+        self._beta1_t = ops.convert_to_tensor(self._beta1, name="beta1")
+        self._beta2_t = ops.convert_to_tensor(self._beta2, name="beta2")
+
+    def _create_slots(self, var_list):
+        for v in var_list:
+            self._zeros_slot(v, "m", self._name)
+            self._zeros_slot(v, "v", self._name)
+
+    def _apply_dense(self, grad, var):
+        lr_t = math_ops.cast(self._lr_t, var.dtype.base_dtype)
+        beta1_t = math_ops.cast(self._beta1_t, var.dtype.base_dtype)
+        beta2_t = math_ops.cast(self._beta2_t, var.dtype.base_dtype)
+        eps = 1e-8
+
+        v = self.get_slot(var, "v")
+        v_t = v.assign(beta1_t * v + (1. - beta1_t) * grad)
+        m = self.get_slot(var, "m")
+        m_t = m.assign(tf.maximum(beta2_t * m + eps, tf.abs(grad)))
+        g_t = v_t / m_t
+
+        var_update = state_ops.assign_sub(var, lr_t * g_t)
+        return control_flow_ops.group(*[var_update, m_t, v_t])
+
+    def _apply_sparse(self, grad, var):
+        raise NotImplementedError("Sparse gradient updates are not supported.")
+
 class MnemonicReader:
     def __init__(self, config):
         self.config = config
@@ -35,14 +81,8 @@ class MnemonicReader:
         self.end = tf.placeholder(tf.int32, [None], 'end-index')
 
         with tf.variable_scope('input-embedding'):
-            c_w = tf.nn.embedding_lookup(self.word_embed, self.c_words)
-            q_w = tf.nn.embedding_lookup(self.word_embed, self.q_words)
-
-            c_ch = layers.char_embed(self.c_chars, self.char_embed, dropout=self.dropout)
-            q_ch = layers.char_embed(self.q_chars, self.char_embed, dropout=self.dropout, reuse=True)
-
-            c = tf.concat([c_w, c_ch], -1)
-            q = tf.concat([q_w, q_ch], -1)
+            c = tf.nn.embedding_lookup(self.word_embed, self.c_words)
+            q = tf.nn.embedding_lookup(self.word_embed, self.q_words)
 
         with tf.variable_scope('rnn'):
             c = layers.birnn(c, self.c_len, self.config.cell_size, self.config.cell_type, self.dropout)
@@ -109,7 +149,7 @@ class MnemonicReader:
             self.loss = loss + lossL2
 
         with tf.variable_scope('optimizer') as scope:
-            optimizer = tf.train.AdamOptimizer(learning_rate=self.lr)
+            optimizer = AdamaxOptimizer(learning_rate=self.lr)
             grads = tf.gradients(self.loss, tf.trainable_variables())
             grads, _ = tf.clip_by_global_norm(grads, self.config.grad_clip)
             grads_and_vars = zip(grads, tf.trainable_variables())
