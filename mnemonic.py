@@ -59,7 +59,8 @@ class MnemonicReader:
                 with tf.variable_scope('self-aligner'):
                     x = _c
                     similarity = tf.matmul(x, x, transpose_b=True)
-                    __c = layers.bi_attention(x, x, similarity, self.c_mask, self.c_mask, only_c2q=True)
+                    _c = layers.bi_attention(x, x, similarity, self.c_mask, self.c_mask, only_c2q=True)
+                    __c = layers.sfu(x, [_c, x * _c, x - _c])
                 with tf.variable_scope('aggregate'):
                     x = __c
                     c_rnn = layers.birnn(x, self.c_len, self.config.cell_size, self.config.cell_type, self.dropout)

@@ -143,8 +143,8 @@ def positional_encoding(inputs, min_timescale=1.0, max_timescale=1.0e4, start_in
 def encoder_block(inputs, num_blocks, num_convolutions, kernel, mask, dropout=0.0, scope='encoder', reuse=None):
 
     def layer_dropout(prev, residual, dropout):
-        pred = tf.random_uniform([], 0.0, 1.0) < dropout
-        return tf.cond(pred, lambda: prev, lambda: prev + residual)
+        pred = tf.random_uniform([], 0.0, 1.0) < dropout # mostly false
+        return tf.cond(pred, lambda: prev, lambda: prev + tf.nn.dropout(residual, 1.0 - dropout))
 
     with tf.variable_scope(scope, reuse=reuse):
         block = [inputs]
@@ -170,15 +170,14 @@ def encoder_block(inputs, num_blocks, num_convolutions, kernel, mask, dropout=0.
 
                     similarity = trilinear(x, x, reuse=reuse)
                     attention = bi_attention(x, x, similarity, mask, mask, only_c2q=True, reuse=reuse)
-                    res = tf.layers.dense(res, dim, activation=tf.nn.relu)
+                    attention = tf.layers.dense(attention, dim, activation=tf.nn.relu)
 
-                    self_attention = layer_dropout(conv[-1], res, (i + 1) / num_blocks * dropout)
+                    self_attention = layer_dropout(conv[-1], attention, (i + 1) / num_blocks * dropout)
 
                 with tf.variable_scope('feedforward', reuse=reuse):
                     x = layer_norm(self_attention, reuse=reuse)
                     x = tf.layers.dense(x, dim, activation=tf.nn.relu, reuse=reuse)
-                    res = tf.nn.dropout(x, 1.0 - dropout)
-                    ff = layer_dropout(self_attention, res, (i + 1) / num_blocks * dropout)
+                    ff = layer_dropout(self_attention, x, (i + 1) / num_blocks * dropout)
 
                 block.append(ff)
 

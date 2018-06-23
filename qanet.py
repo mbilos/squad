@@ -41,6 +41,14 @@ class QANet:
             c = tf.concat([c_w, c_ch], -1)
             q = tf.concat([q_w, q_ch], -1)
 
+        with tf.variable_scope('highway-1'):
+            c = layers.highway(c, self.config.embed_size, dropout=self.dropout)
+            q = layers.highway(q, self.config.embed_size, dropout=self.dropout, reuse=True)
+
+        with tf.variable_scope('highway-2'):
+            c = layers.highway(c, self.config.embed_size, dropout=self.dropout)
+            q = layers.highway(q, self.config.embed_size, dropout=self.dropout, reuse=True)
+
         with tf.variable_scope('input-encoder'):
             c = layers.encoder_block(c,
                                      num_blocks=1,
