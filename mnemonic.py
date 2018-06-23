@@ -49,19 +49,18 @@ class MnemonicReader:
             q = layers.birnn(q, self.q_len, self.config.cell_size, self.config.cell_type, self.dropout, reuse=True)
 
         c_hats = [c]
-        with tf.variable_scope('iterative-aligner'):
-            for i in range(self.aligner_hops):
-                reuse = i > 0
-                with tf.variable_scope('interactive-aligner', reuse=reuse):
+        for i in range(self.aligner_hops):
+            with tf.variable_scope('iterative-aligner-%d' % i):
+                with tf.variable_scope('interactive-aligner'):
                     x = c_hats[-1]
                     similarity = tf.matmul(x, q, transpose_b=True)
-                    _q = layers.bi_attention(x, q, similarity, self.c_mask, self.q_mask, only_c2q=True, reuse=reuse)
-                    _c = layers.sfu(c, [_q, x * _q, x - _q])
-                with tf.variable_scope('self-aligner', reuse=reuse):
+                    _q = layers.bi_attention(x, q, similarity, self.c_mask, self.q_mask, only_c2q=True)
+                    _c = layers.sfu(x, [_q, x * _q, x - _q])
+                with tf.variable_scope('self-aligner'):
                     x = _c
                     similarity = tf.matmul(x, x, transpose_b=True)
-                    __c = layers.bi_attention(x, x, similarity, self.c_mask, self.c_mask, only_c2q=True, reuse=reuse)
-                with tf.variable_scope('aggregate', reuse=reuse):
+                    __c = layers.bi_attention(x, x, similarity, self.c_mask, self.c_mask, only_c2q=True)
+                with tf.variable_scope('aggregate'):
                     x = __c
                     c_rnn = layers.birnn(x, self.c_len, self.config.cell_size, self.config.cell_type, self.dropout)
                     c_hats.append(c_rnn)
@@ -86,16 +85,14 @@ class MnemonicReader:
 
         c_hat = c_hats[-1]
         z_s = q[:, -1, :]
-        with tf.variable_scope('answer-pointer'):
-            for i in range(self.pointer_hops):
-                reuse = i > 0
-                with tf.variable_scope('pointer-hop', reuse=reuse):
-                    start, p_start = pointer(c, z_s, 'start-pointer', reuse)
-                    z_e = memory(c, p_start, z_s, 'end-memory', reuse) # [batch, cell_size * 2]
-                    end, p_end = pointer(c, z_e, 'end-pointer', reuse)
+        for i in range(self.pointer_hops):
+            with tf.variable_scope('pointer-hop-%d' % i):
+                start, p_start = pointer(c_hat, z_s, 'start-pointer')
+                z_e = memory(c_hat, p_start, z_s, 'end-memory') # [batch, cell_size * 2]
+                end, p_end = pointer(c_hat, z_e, 'end-pointer')
 
-                    if i + 1 < self.pointer_hops:
-                        z_s = memory(c, p_end, z_e, 'start-memory', reuse)
+                if i + 1 < self.pointer_hops:
+                    z_s = memory(c_hat, p_end, z_e, 'start-memory')
 
         self.start_linear = start
         self.end_linear = end
