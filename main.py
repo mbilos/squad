@@ -8,6 +8,7 @@ import read
 import evaluate
 
 from bidaf import BiDAF
+from bidaf_self_attention import BiDAFSelfAttention
 from mnemonic import MnemonicReader
 from qanet import QANet
 
@@ -23,6 +24,8 @@ class Main:
         with tf.Graph().as_default() as g:
             if self.config.name == 'bidaf':
                 self.model = BiDAF(self.config)
+            if self.config.name == 'bidaf-att':
+                self.model = BiDAFSelfAttention(self.config)
             elif self.config.name == 'mnemonic':
                 self.model = MnemonicReader(self.config)
             elif self.config.name == 'qanet':
