@@ -150,33 +150,33 @@ def encoder_block(inputs, num_blocks, num_convolutions, kernel, mask, dropout=0.
         block = [inputs]
 
         for i in range(num_blocks):
-            with tf.variable_scope('encoder-block-%d' % i, reuse=reuse):
+            with tf.variable_scope('encoder-block-%d' % i):
                 dim = get_shape(block[i])[-1]
 
                 pos = positional_encoding(block[i])
 
                 conv = [pos]
                 for j in range(num_convolutions):
-                    with tf.variable_scope('residual-block-%d' % j, reuse=reuse):
-                        x = layer_norm(conv[j], reuse=reuse)
+                    with tf.variable_scope('residual-block-%d' % j):
+                        x = layer_norm(conv[j])
                         if (j + 1) % 2 == 0:
                             x = tf.nn.dropout(x, 1.0 - dropout)
-                        x = tf.layers.conv1d(x, dim, kernel, padding='same', activation=tf.nn.relu, reuse=reuse)
+                        x = tf.layers.conv1d(x, dim, kernel, padding='same', activation=tf.nn.relu)
                         res = layer_dropout(conv[j], x, (j + 1) / num_convolutions * dropout)
                         conv.append(res)
 
-                with tf.variable_scope('self-attention', reuse=reuse) as scope:
-                    x = layer_norm(conv[-1], reuse=reuse)
+                with tf.variable_scope('self-attention') as scope:
+                    x = layer_norm(conv[-1])
 
-                    similarity = trilinear(x, x, reuse=reuse)
-                    attention = bi_attention(x, x, similarity, mask, mask, only_c2q=True, reuse=reuse)
+                    similarity = trilinear(x, x)
+                    attention = bi_attention(x, x, similarity, mask, mask, only_c2q=True)
                     attention = tf.layers.dense(attention, dim, activation=tf.nn.relu)
 
                     self_attention = layer_dropout(conv[-1], attention, (i + 1) / num_blocks * dropout)
 
-                with tf.variable_scope('feedforward', reuse=reuse):
-                    x = layer_norm(self_attention, reuse=reuse)
-                    x = tf.layers.dense(x, dim, activation=tf.nn.relu, reuse=reuse)
+                with tf.variable_scope('feedforward'):
+                    x = layer_norm(self_attention)
+                    x = tf.layers.dense(x, dim, activation=tf.nn.relu)
                     ff = layer_dropout(self_attention, x, (i + 1) / num_blocks * dropout)
 
                 block.append(ff)

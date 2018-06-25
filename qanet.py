@@ -49,6 +49,10 @@ class QANet:
             c = layers.highway(c, self.config.embed_size, dropout=self.dropout)
             q = layers.highway(q, self.config.embed_size, dropout=self.dropout, reuse=True)
 
+        with tf.variable_scope('projection'):
+            c = tf.layers.conv1d(c, self.config.filters, 1, padding='same')
+            q = tf.layers.conv1d(q, self.config.filters, 1, padding='same', reuse=True)
+
         with tf.variable_scope('input-encoder'):
             c = layers.encoder_block(c,
                                      num_blocks=1,
